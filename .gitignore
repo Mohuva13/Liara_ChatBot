@@ -1,0 +1,34 @@
+# JavaScript / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local data, indexes, logs, and traces
+.data/
+data/indexes/
+*.log
+.otel/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
