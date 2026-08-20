@@ -4,6 +4,9 @@ import type { UIMessage } from "ai";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import { mapBackendStream } from "@/features/chat/transport/backend-stream";
+import { isSameOriginRequest } from "@/lib/http/same-origin";
+
 const SESSION_COOKIE = "liara_assistant_session";
 const MAX_REQUEST_BYTES = 64 * 1024;
 
@@ -52,11 +55,16 @@ function publicError(status: number, code: string, message: string) {
 }
 
 async function createSession(baseUrl: string): Promise<SessionPayload | null> {
-  const response = await fetch(`${baseUrl}/v1/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/v1/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
   if (!response.ok) {
     return null;
   }
@@ -75,6 +83,13 @@ async function createSession(baseUrl: string): Promise<SessionPayload | null> {
 }
 
 export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return publicError(403, "invalid_origin", "مبدأ درخواست معتبر نیست.");
+  }
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/json")) {
+    return publicError(415, "unsupported_media_type", "نوع درخواست معتبر نیست.");
+  }
   const contentLength = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
     return publicError(413, "request_too_large", "حجم درخواست بیش از حد مجاز است.");
@@ -122,31 +137,55 @@ export async function POST(request: Request) {
     sessionId = createdSession.session_id;
   }
 
-  const upstream = await fetch(`${baseUrl}/v1/chat/stream`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "text/event-stream",
-      "x-request-id": randomUUID(),
-    },
-    body: JSON.stringify({
-      protocol_version: "1",
-      session_id: sessionId,
-      message_id: message.id,
-      text,
-      surface: body.surface === "popup" ? "popup" : "page",
-      locale: "fa-IR",
-    }),
-    cache: "no-store",
-    signal: request.signal,
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${baseUrl}/v1/chat/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "text/event-stream",
+        "x-request-id": randomUUID(),
+      },
+      body: JSON.stringify({
+        protocol_version: "1",
+        session_id: sessionId,
+        message_id: message.id,
+        text,
+        surface: body.surface === "popup" ? "popup" : "page",
+        locale: "fa-IR",
+      }),
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    return publicError(
+      503,
+      "backend_unavailable",
+      "سرویس پاسخ‌گویی موقتاً در دسترس نیست.",
+    );
+  }
 
-  const response = new NextResponse(upstream.body, {
+  if (!upstream.ok || upstream.body === null) {
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: {
+        "content-type":
+          upstream.headers.get("content-type") ??
+          "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        "retry-after": upstream.headers.get("retry-after") ?? "",
+        "x-request-id": upstream.headers.get("x-request-id") ?? randomUUID(),
+      },
+    });
+  }
+
+  const response = new NextResponse(mapBackendStream(upstream.body), {
     status: upstream.status,
     headers: {
-      "content-type":
-        upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
-      "cache-control": "no-store",
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-store",
+      "x-accel-buffering": "no",
+      "x-vercel-ai-ui-message-stream": "v1",
       "x-request-id": upstream.headers.get("x-request-id") ?? randomUUID(),
     },
   });

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { DirectionProvider } from "@/components/ui/direction";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatProvider } from "@/features/chat/chat-provider";
+import { ChatPopup } from "@/features/chat/components/chat-popup";
 
 import "./globals.css";
 
@@ -17,7 +18,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body>
         <DirectionProvider direction="rtl">
           <TooltipProvider>
-            <ChatProvider>{children}</ChatProvider>
+            <ChatProvider>
+              {children}
+              <ChatPopup />
+            </ChatProvider>
           </TooltipProvider>
         </DirectionProvider>
       </body>

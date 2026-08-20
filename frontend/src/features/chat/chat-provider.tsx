@@ -1,15 +1,16 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
+import { DefaultChatTransport } from "ai";
 import {
   createContext,
   useContext,
   useMemo,
   type PropsWithChildren,
 } from "react";
+import type { LiaraUIMessage } from "@/features/chat/types/messages";
 
-type ChatContextValue = ReturnType<typeof useChat<UIMessage>>;
+type ChatContextValue = ReturnType<typeof useChat<LiaraUIMessage>>;
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
@@ -22,7 +23,10 @@ export function ChatProvider({ children }: PropsWithChildren) {
       }),
     [],
   );
-  const chat = useChat({ id: "liara-documentation-assistant", transport });
+  const chat = useChat<LiaraUIMessage>({
+    id: "liara-documentation-assistant",
+    transport,
+  });
 
   return <ChatContext.Provider value={chat}>{children}</ChatContext.Provider>;
 }

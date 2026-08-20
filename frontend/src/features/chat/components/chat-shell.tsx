@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import {
   Conversation,
   ConversationContent,
@@ -29,8 +31,17 @@ import {
 } from "@/components/ai-elements/suggestion";
 import { Button } from "@/components/ui/button";
 import { useLiaraChat } from "@/features/chat/chat-provider";
-import type { UIMessage } from "ai";
-import { BookOpenText, LifeBuoy, RotateCcw, Sparkles } from "lucide-react";
+import { SourceCards } from "@/features/chat/components/source-cards";
+import { SupportCard } from "@/features/chat/components/support-card";
+import type { LiaraUIMessage } from "@/features/chat/types/messages";
+import { cn } from "@/lib/utils";
+import {
+  BookOpenText,
+  LifeBuoy,
+  RefreshCcw,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
 
 type ChatSurface = "popup" | "page";
 
@@ -40,36 +51,49 @@ const STARTERS = [
   "Pgvector در PostgreSQL لیارا چه محدودیتی دارد؟",
 ];
 
-function MessageSources({ message }: { message: UIMessage }) {
+function MessageSources({ message }: { message: LiaraUIMessage }) {
   const sources = message.parts.filter((part) => part.type === "source-url");
+  const details = message.parts
+    .filter((part) => part.type === "data-sourceDetails")
+    .flatMap((part) => part.data.items);
   if (sources.length === 0) {
     return null;
   }
 
   return (
-    <Sources>
-      <SourcesTrigger count={sources.length}>
-        {sources.length.toLocaleString("fa-IR")} منبع مستند
-      </SourcesTrigger>
-      <SourcesContent>
-        {sources.map((source) => (
-          <Source
-            href={source.url}
-            key={source.sourceId}
-            title={source.title ?? "مستندات لیارا"}
-          />
-        ))}
-      </SourcesContent>
-    </Sources>
+    <div className="space-y-3">
+      <Sources>
+        <SourcesTrigger count={sources.length}>
+          {sources.length.toLocaleString("fa-IR")} منبع مستند
+        </SourcesTrigger>
+        <SourcesContent>
+          {sources.map((source) => (
+            <Source
+              href={source.url}
+              key={source.sourceId}
+              title={source.title ?? "مستندات لیارا"}
+            />
+          ))}
+        </SourcesContent>
+      </Sources>
+      <SourceCards sources={details} />
+    </div>
   );
 }
 
-function ChatMessage({ message }: { message: UIMessage }) {
+function ChatMessage({
+  message,
+  onSelect,
+}: {
+  message: LiaraUIMessage;
+  onSelect: (question: string) => void;
+}) {
   return (
     <Message from={message.role}>
       <MessageContent>
-        {message.parts.map((part, index) =>
-          part.type === "text" ? (
+        {message.parts.map((part, index) => {
+          if (part.type === "text") {
+            return (
             <MessageResponse
               dir="auto"
               isAnimating={part.state === "streaming"}
@@ -77,8 +101,34 @@ function ChatMessage({ message }: { message: UIMessage }) {
             >
               {part.text}
             </MessageResponse>
-          ) : null,
-        )}
+            );
+          }
+          if (part.type === "data-support") {
+            return (
+              <SupportCard
+                key={`${message.id}-support-${index}`}
+                support={part.data}
+              />
+            );
+          }
+          if (part.type === "data-suggestions" && part.data.items.length > 0) {
+            return (
+              <Suggestions
+                className="w-full flex-wrap"
+                key={`${message.id}-suggestions-${index}`}
+              >
+                {part.data.items.map((suggestion) => (
+                  <Suggestion
+                    key={suggestion}
+                    onClick={onSelect}
+                    suggestion={suggestion}
+                  />
+                ))}
+              </Suggestions>
+            );
+          }
+          return null;
+        })}
       </MessageContent>
       {message.role === "assistant" ? <MessageSources message={message} /> : null}
     </Message>
@@ -118,15 +168,32 @@ function WelcomeState({ onSelect }: { onSelect: (question: string) => void }) {
 }
 
 export function ChatShell({ surface }: { surface: ChatSurface }) {
+  const [resetFailed, setResetFailed] = useState(false);
   const {
     clearError,
     error,
     messages,
     regenerate,
     sendMessage,
+    setMessages,
     status,
     stop,
   } = useLiaraChat();
+
+  const resetSession = async () => {
+    stop();
+    setResetFailed(false);
+    try {
+      const response = await fetch("/api/session", { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("session reset failed");
+      }
+      setMessages([]);
+      clearError();
+    } catch {
+      setResetFailed(true);
+    }
+  };
 
   const send = async (text: string) => {
     const normalized = text.trim();
@@ -147,9 +214,19 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
   return (
     <section
       aria-label="گفت‌وگو با دستیار مستندات لیارا"
-      className="mx-auto flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.75rem] border bg-card/95 shadow-2xl shadow-primary/10 backdrop-blur sm:h-[calc(100dvh-2.5rem)] lg:h-[calc(100dvh-4rem)]"
+      className={cn(
+        "mx-auto flex w-full flex-col overflow-hidden border bg-card/95 backdrop-blur",
+        surface === "page" &&
+          "elevation-chat h-[calc(100dvh-1rem)] max-w-5xl rounded-[var(--radius-popup)] sm:h-[calc(100dvh-2.5rem)] lg:h-[calc(100dvh-4rem)]",
+        surface === "popup" && "h-full rounded-[var(--radius-popup)]",
+      )}
     >
-      <header className="flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-6 sm:py-4">
+      <header
+        className={cn(
+          "flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-6 sm:py-4",
+          surface === "popup" && "ps-12",
+        )}
+      >
         <div className="min-w-0">
           <h1 className="truncate text-base font-semibold sm:text-lg">
             دستیار مستندات لیارا
@@ -158,11 +235,32 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
             {statusLabel}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
-          <LifeBuoy aria-hidden="true" className="size-4" />
-          پاسخ مستند
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            aria-label="شروع گفت‌وگوی جدید"
+            onClick={() => void resetSession()}
+            size="icon-sm"
+            title="شروع گفت‌وگوی جدید"
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCcw aria-hidden="true" />
+          </Button>
+          <div className="hidden items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary sm:flex">
+            <LifeBuoy aria-hidden="true" className="size-4" />
+            پاسخ مستند
+          </div>
         </div>
       </header>
+
+      {resetFailed ? (
+        <p
+          className="border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-xs text-destructive"
+          role="alert"
+        >
+          شروع گفت‌وگوی جدید انجام نشد؛ دوباره تلاش کنید.
+        </p>
+      ) : null}
 
       <Conversation className="min-h-0">
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-3 py-5 sm:px-6">
@@ -170,7 +268,11 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
             <WelcomeState onSelect={(question) => void send(question)} />
           ) : (
             messages.map((message) => (
-              <ChatMessage key={message.id} message={message} />
+              <ChatMessage
+                key={message.id}
+                message={message}
+                onSelect={(question) => void send(question)}
+              />
             ))
           )}
           {error ? (
