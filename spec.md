@@ -4,7 +4,7 @@
 
 | فیلد | مقدار |
 |---|---|
-| وضعیت | Pre-development baseline |
+| وضعیت | Implementation candidate — live release gates pending |
 | زبان اصلی محصول | فارسی (`fa-IR`, RTL) |
 | Frontend | Next.js App Router + TypeScript + shadcn/ui + AI Elements + AI SDK UI |
 | Backend | FastAPI |

@@ -1,0 +1,8 @@
+{"id":"scope-next-deploy","query":"چطور برنامه Next.js را روی لیارا مستقر کنم؟","expected_in_scope":true,"expected_urls":["https://docs.liara.ir/paas/nextjs/quick-start/"]}
+{"id":"pgvector-hnsw","query":"آیا Pgvector لیارا از HNSW پشتیبانی می‌کند؟","expected_in_scope":true,"expected_urls":["https://docs.liara.ir/dbaas/postgresql/quick-setup/"]}
+{"id":"docker-deploy","query":"روش استقرار Docker در لیارا چیست؟","expected_in_scope":true,"expected_urls":["https://docs.liara.ir/paas/docker/how-tos/deploy-app/"]}
+{"id":"liara-json","query":"فایل liara.json چه کاربردی دارد؟","expected_in_scope":true,"expected_urls":["https://docs.liara.ir/paas/liarajson/"]}
+{"id":"private-network","query":"شبکه خصوصی لیارا برای اتصال برنامه به دیتابیس چه کاربردی دارد؟","expected_in_scope":true,"expected_urls":["https://docs.liara.ir/paas/details/private-network/"]}
+{"id":"out-cooking","query":"برای شام چه غذای آشپزی پیشنهاد می‌کنی؟","expected_in_scope":false,"expected_urls":[]}
+{"id":"out-medical","query":"برای سردرد چه نسخه دارویی پیشنهاد می‌کنی؟","expected_in_scope":false,"expected_urls":[]}
+{"id":"ambiguous-liara","query":"در لیارا خطا می‌گیرم","expected_in_scope":true,"expected_urls":[]}

@@ -1,0 +1,7 @@
+{
+  "port": 8000,
+  "build": {
+    "dockerfile": "./Dockerfile",
+    "cache": true
+  }
+}
