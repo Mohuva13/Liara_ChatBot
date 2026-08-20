@@ -1,0 +1,596 @@
+import asyncio
+import hashlib
+import uuid
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
+from typing import Protocol
+from urllib.parse import urlparse
+
+from app.core.config import Settings
+from app.core.logging import telemetry_event
+from app.generation.prompt import build_grounded_messages
+from app.generation.router import select_model_route
+from app.generation.validator import (
+    GroundingValidationError,
+    validate_grounded_answer,
+)
+from app.ingestion.redactor import redact_credentials
+from app.models.chat import ChatStreamRequest
+from app.models.events import ChatEvent, SourcePayload, UsagePayload
+from app.policies.rate_limit import (
+    RateLimitDecision,
+    RateLimitUnavailable,
+    RedisRateLimiter,
+)
+from app.policies.scope import ScopeDecision, classify_scope
+from app.providers.base import (
+    AIProvider,
+    CompletionResult,
+    ProviderFailure,
+    ProviderMessage,
+    ProviderUsage,
+)
+from app.retrieval.evidence import assess_evidence, meaningful_terms
+from app.retrieval.models import EvidenceDecision, RetrievedChunk
+from app.sessions.models import ReservationResult, SessionState, SessionTurn
+
+
+class Retriever(Protocol):
+    async def retrieve(
+        self, query: str, embedding: Sequence[float] | None
+    ) -> list[RetrievedChunk]: ...
+
+
+class ConversationStore(Protocol):
+    async def load(self, session_id: str) -> SessionState | None: ...
+
+    async def append_turns(
+        self, session_id: str, turns: list[SessionTurn]
+    ) -> SessionState: ...
+
+    async def reserve_message(
+        self, session_id: str, message_id: str
+    ) -> ReservationResult: ...
+
+    async def finish_message(self, session_id: str, message_id: str) -> None: ...
+
+    async def release_message(self, session_id: str, message_id: str) -> None: ...
+
+    async def record_issue_failure(
+        self, session_id: str, issue_key: str
+    ) -> SessionState: ...
+
+
+class RateLimiter(Protocol):
+    async def check(self, identity: str) -> RateLimitDecision: ...
+
+
+class ChatPreparationError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        code: str,
+        message: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.headers = headers or {}
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedChat:
+    payload: ChatStreamRequest
+    state: SessionState
+    scope: ScopeDecision
+    response_id: str
+    request_id: str
+
+
+FAILURE_MARKERS = (
+    "جواب نداد",
+    "کار نکرد",
+    "حل نشد",
+    "نتیجه نداد",
+    "هنوز مشکل دارم",
+)
+
+
+class ChatOrchestrator:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        store: ConversationStore,
+        rate_limiter: RateLimiter,
+        retriever: Retriever,
+        llm_provider: AIProvider,
+        embedding_provider: AIProvider,
+    ) -> None:
+        self.settings = settings
+        self.store = store
+        self.rate_limiter = rate_limiter
+        self.retriever = retriever
+        self.llm_provider = llm_provider
+        self.embedding_provider = embedding_provider
+
+    async def prepare(
+        self, payload: ChatStreamRequest, *, request_id: str
+    ) -> PreparedChat:
+        state = await self.store.load(payload.session_id)
+        if state is None:
+            raise ChatPreparationError(
+                status_code=404,
+                code="session_not_found",
+                message="نشست گفتگو پیدا نشد یا منقضی شده است.",
+            )
+        try:
+            rate = await self.rate_limiter.check(payload.session_id)
+        except RateLimitUnavailable as error:
+            raise ChatPreparationError(
+                status_code=503,
+                code="rate_limit_unavailable",
+                message="کنترل ظرفیت سرویس موقتاً در دسترس نیست.",
+            ) from error
+        if not rate.allowed:
+            raise ChatPreparationError(
+                status_code=429,
+                code="rate_limited",
+                message="تعداد درخواست‌ها بیش از حد مجاز است.",
+                headers={"Retry-After": str(rate.retry_after_seconds)},
+            )
+        reservation = await self.store.reserve_message(
+            payload.session_id, payload.message_id
+        )
+        if not reservation.acquired:
+            raise ChatPreparationError(
+                status_code=409,
+                code=(
+                    "duplicate_completed"
+                    if reservation.status == "complete"
+                    else "duplicate_in_progress"
+                ),
+                message="این پیام قبلاً دریافت شده است.",
+            )
+        return PreparedChat(
+            payload=payload,
+            state=state,
+            scope=classify_scope(payload.text),
+            response_id=uuid.uuid4().hex,
+            request_id=request_id,
+        )
+
+    async def stream(self, prepared: PreparedChat) -> AsyncIterator[bytes]:
+        payload = prepared.payload
+        completed = False
+        try:
+            yield ChatEvent(
+                type="message_start",
+                response_id=prepared.response_id,
+                session_id=payload.session_id,
+            ).to_sse()
+            if not prepared.scope.in_scope:
+                async for event in self._out_of_scope(prepared):
+                    yield event
+                completed = True
+                return
+
+            repeated_failure = await self._failure_count(prepared)
+            if repeated_failure >= 2:
+                async for event in self._support(
+                    prepared, reason="repeated_failure", evidence=()
+                ):
+                    yield event
+                completed = True
+                return
+
+            yield ChatEvent(type="status", text="در حال جست‌وجوی مستندات…").to_sse()
+            evidence, decision = await self._retrieve(prepared)
+            if not decision.sufficient:
+                if len(meaningful_terms(payload.text)) < 3:
+                    async for event in self._clarification(prepared, decision.reason):
+                        yield event
+                else:
+                    async for event in self._support(
+                        prepared, reason=decision.reason, evidence=evidence
+                    ):
+                        yield event
+                completed = True
+                return
+
+            yield ChatEvent(type="status", text="در حال آماده‌سازی پاسخ مستند…").to_sse()
+            route = select_model_route(
+                payload.text,
+                prepared.scope.intent,
+                decision,
+                small_model=self._required(self.settings.llm_small_model),
+                large_model=self._required(self.settings.llm_large_model),
+                small_max_tokens=self.settings.max_output_tokens_small,
+                large_max_tokens=self.settings.max_output_tokens_large,
+            )
+            messages = build_grounded_messages(
+                payload.text,
+                decision.chunks,
+                intent=prepared.scope.intent,
+                knowledge_level=prepared.state.knowledge_level,
+                summary=prepared.state.summary,
+                recent_turns=prepared.state.turns,
+                max_context_tokens=self.settings.max_context_tokens,
+            )
+            raw, usage, finish_reason = await self._generate_validated_raw(
+                messages,
+                model=route.model,
+                max_tokens=route.max_output_tokens,
+                request_id=prepared.request_id,
+            )
+            try:
+                answer = validate_grounded_answer(raw, decision.chunks)
+            except GroundingValidationError:
+                repair = await self._repair(
+                    messages,
+                    model=route.model,
+                    max_tokens=route.max_output_tokens,
+                    request_id=prepared.request_id,
+                )
+                answer = validate_grounded_answer(repair.text, decision.chunks)
+                usage = ProviderUsage(
+                    input_tokens=usage.input_tokens + repair.usage.input_tokens,
+                    output_tokens=usage.output_tokens + repair.usage.output_tokens,
+                    cached_tokens=usage.cached_tokens + repair.usage.cached_tokens,
+                )
+                finish_reason = repair.finish_reason
+
+            cited = {
+                chunk.chunk_id: chunk
+                for chunk in decision.chunks
+                if chunk.chunk_id in answer.source_ids
+            }
+            for text in self._text_chunks(answer.answer_markdown):
+                yield ChatEvent(type="text_delta", text=text).to_sse()
+                await asyncio.sleep(0)
+            sources = [
+                self._source(cited[source_id]) for source_id in answer.source_ids
+            ]
+            yield ChatEvent(type="sources", sources=sources).to_sse()
+            if answer.suggestions:
+                yield ChatEvent(
+                    type="suggestions", suggestions=answer.suggestions
+                ).to_sse()
+            yield ChatEvent(
+                type="usage",
+                usage=UsagePayload(
+                    model_tier=route.tier,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cached_tokens=usage.cached_tokens,
+                ),
+            ).to_sse()
+            yield ChatEvent(
+                type="message_end",
+                finish_reason=finish_reason,
+                outcome="answered",
+            ).to_sse()
+            telemetry_event(
+                "chat_outcome",
+                request_id=prepared.request_id,
+                response_id=prepared.response_id,
+                outcome="answered",
+                model_tier=route.tier,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
+                corpus_versions=sorted(
+                    {chunk.corpus_version for chunk in cited.values()}
+                ),
+                cache_status="not_implemented",
+            )
+            await self.store.append_turns(
+                payload.session_id,
+                [
+                    SessionTurn(role="user", text=self._safe_user_text(payload.text)),
+                    SessionTurn(
+                        role="assistant",
+                        text=answer.answer_markdown,
+                        outcome="answered",
+                        source_ids=answer.source_ids,
+                    ),
+                ],
+            )
+            completed = True
+        except GroundingValidationError:
+            yield ChatEvent(
+                type="error",
+                code="grounding_failed",
+                message="پاسخ قابل استناد تولید نشد.",
+                retryable=False,
+            ).to_sse()
+        except ProviderFailure as error:
+            yield ChatEvent(
+                type="error",
+                code=error.code,
+                message="سرویس تولید پاسخ موقتاً در دسترس نیست.",
+                retryable=error.retryable,
+            ).to_sse()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            yield ChatEvent(
+                type="error",
+                code="generation_failed",
+                message="پاسخ مستند تکمیل نشد.",
+                retryable=True,
+            ).to_sse()
+        finally:
+            try:
+                if completed:
+                    await self.store.finish_message(
+                        payload.session_id, payload.message_id
+                    )
+                else:
+                    await self.store.release_message(
+                        payload.session_id, payload.message_id
+                    )
+            except Exception:
+                telemetry_event(
+                    "session_finalize_failed",
+                    request_id=prepared.request_id,
+                    response_id=prepared.response_id,
+                    outcome="error",
+                )
+
+    async def _retrieve(
+        self, prepared: PreparedChat
+    ) -> tuple[list[RetrievedChunk], EvidenceDecision]:
+        settings = self.settings
+        vectors = await self.embedding_provider.embed(
+            [prepared.payload.text],
+            model=self._required(settings.embedding_model),
+            dimensions=settings.embedding_dimensions,
+            request_id=prepared.request_id,
+        )
+        evidence = await self.retriever.retrieve(prepared.payload.text, vectors[0])
+        decision = assess_evidence(
+            prepared.payload.text,
+            evidence,
+            min_score=settings.evidence_min_score,
+            min_query_coverage=settings.evidence_min_query_coverage,
+            limit=settings.evidence_limit,
+            max_tokens=settings.max_evidence_tokens,
+        )
+        return evidence, decision
+
+    async def _generate_validated_raw(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        model: str,
+        max_tokens: int,
+        request_id: str,
+    ) -> tuple[str, ProviderUsage, str]:
+        parts: list[str] = []
+        usage = ProviderUsage()
+        finish_reason = "unknown"
+        async for delta in self.llm_provider.stream(
+            messages,
+            model=model,
+            max_output_tokens=max_tokens,
+            request_id=request_id,
+        ):
+            parts.append(delta.text)
+            if delta.usage is not None:
+                usage = delta.usage
+            if delta.finish_reason is not None:
+                finish_reason = delta.finish_reason
+        return "".join(parts), usage, finish_reason
+
+    async def _repair(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        model: str,
+        max_tokens: int,
+        request_id: str,
+    ) -> CompletionResult:
+        repair_messages = [
+            *messages,
+            ProviderMessage(
+                role="user",
+                content=(
+                    "خروجی قبلی قرارداد JSON یا citation معتبر را رعایت نکرد. "
+                    "فقط JSON معتبر مطابق schema و فقط با source_idهای EVIDENCE "
+                    "برگردان."
+                ),
+            ),
+        ]
+        return await self.llm_provider.complete(
+            repair_messages,
+            model=model,
+            max_output_tokens=max_tokens,
+            request_id=request_id,
+            json_mode=True,
+        )
+
+    async def _failure_count(self, prepared: PreparedChat) -> int:
+        normalized = prepared.payload.text.casefold()
+        if not any(marker in normalized for marker in FAILURE_MARKERS):
+            return 0
+        previous_user = next(
+            (
+                turn.text
+                for turn in reversed(prepared.state.turns)
+                if turn.role == "user"
+                and not any(
+                    marker in turn.text.casefold() for marker in FAILURE_MARKERS
+                )
+            ),
+            prepared.payload.text,
+        )
+        issue_key = hashlib.sha256(previous_user.encode()).hexdigest()[:20]
+        state = await self.store.record_issue_failure(
+            prepared.payload.session_id, issue_key
+        )
+        return state.issue.failure_count
+
+    async def _out_of_scope(self, prepared: PreparedChat) -> AsyncIterator[bytes]:
+        text = (
+            "این دستیار فقط درباره خدمات و مستندات رسمی لیارا پاسخ می‌دهد. "
+            "می‌توانید درباره استقرار برنامه، دیتابیس، دامنه یا شبکه خصوصی بپرسید."
+        )
+        yield ChatEvent(type="text_delta", text=text).to_sse()
+        yield ChatEvent(
+            type="suggestions",
+            suggestions=[
+                "چطور یک برنامه را روی لیارا مستقر کنم؟",
+                "چطور به دیتابیس لیارا متصل شوم؟",
+            ],
+        ).to_sse()
+        yield ChatEvent(type="usage", usage=UsagePayload(model_tier="none")).to_sse()
+        yield ChatEvent(
+            type="message_end", finish_reason="policy", outcome="out_of_scope"
+        ).to_sse()
+        await self.store.append_turns(
+            prepared.payload.session_id,
+            [
+                SessionTurn(
+                    role="user", text=self._safe_user_text(prepared.payload.text)
+                ),
+                SessionTurn(role="assistant", text=text, outcome="out_of_scope"),
+            ],
+        )
+
+    async def _clarification(
+        self, prepared: PreparedChat, reason: str
+    ) -> AsyncIterator[bytes]:
+        text = (
+            "برای پیدا کردن سند درست، لطفاً نام سرویس یا پلتفرم لیارا و هدف یا "
+            "خطایی که می‌بینید را مشخص کنید."
+        )
+        yield ChatEvent(type="text_delta", text=text).to_sse()
+        yield ChatEvent(
+            type="message_end", finish_reason="policy", outcome="clarification"
+        ).to_sse()
+        await self.store.append_turns(
+            prepared.payload.session_id,
+            [
+                SessionTurn(
+                    role="user", text=self._safe_user_text(prepared.payload.text)
+                ),
+                SessionTurn(role="assistant", text=text, outcome=reason),
+            ],
+        )
+
+    async def _support(
+        self,
+        prepared: PreparedChat,
+        *,
+        reason: str,
+        evidence: Sequence[RetrievedChunk],
+    ) -> AsyncIterator[bytes]:
+        safe_query, _ = redact_credentials(prepared.payload.text)
+        titles = "، ".join(dict.fromkeys(chunk.title for chunk in evidence[:3]))
+        summary = f"هدف/سؤال: {safe_query[:500]}"
+        if titles:
+            summary += f"\nمستندات بررسی‌شده: {titles}"
+        yield ChatEvent(
+            type="support",
+            reason_code=reason,
+            ticket_url=str(self.settings.support_ticket_url),
+            summary=summary,
+            text="برای این مورد پاسخ قابل‌اعتماد کافی پیدا نشد.",
+        ).to_sse()
+        yield ChatEvent(
+            type="message_end", finish_reason="policy", outcome="support"
+        ).to_sse()
+        await self.store.append_turns(
+            prepared.payload.session_id,
+            [
+                SessionTurn(
+                    role="user", text=self._safe_user_text(prepared.payload.text)
+                ),
+                SessionTurn(role="assistant", text=summary, outcome="support"),
+            ],
+        )
+
+    @staticmethod
+    def _source(chunk: RetrievedChunk) -> SourcePayload:
+        parsed = urlparse(chunk.canonical_url)
+        if parsed.scheme != "https" or parsed.hostname != "docs.liara.ir":
+            raise GroundingValidationError("source URL is outside allowlist")
+        snippet = " ".join(chunk.content.split())[:280]
+        return SourcePayload(
+            id=chunk.chunk_id,
+            title=chunk.title,
+            url=chunk.canonical_url,
+            section=" > ".join(chunk.heading_path),
+            snippet=snippet,
+            source_commit=chunk.source_commit,
+        )
+
+    @staticmethod
+    def _text_chunks(text: str, size: int = 120) -> list[str]:
+        return [text[index : index + size] for index in range(0, len(text), size)]
+
+    @staticmethod
+    def _safe_user_text(text: str) -> str:
+        safe, _ = redact_credentials(text)
+        return safe[:20000]
+
+    @staticmethod
+    def _required(value: str | None) -> str:
+        if not value:
+            raise ProviderFailure("provider_configuration_missing", retryable=False)
+        return value
+
+
+def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
+    required = (
+        settings.database_url,
+        settings.redis_url,
+        settings.llm_base_url,
+        settings.llm_api_key,
+        settings.llm_small_model,
+        settings.llm_large_model,
+        settings.embedding_base_url,
+        settings.embedding_api_key,
+        settings.embedding_model,
+        settings.embedding_dimensions,
+    )
+    if not all(required):
+        return None
+    assert settings.database_url is not None
+    assert settings.llm_base_url is not None
+    assert settings.llm_api_key is not None
+    assert settings.embedding_base_url is not None
+    assert settings.embedding_api_key is not None
+    from app.providers.openai_compat import OpenAICompatibleProvider
+    from app.retrieval.postgres import PostgresHybridRetriever
+    from app.services.sessions import RedisSessionStore
+
+    store = RedisSessionStore(settings)
+    llm = OpenAICompatibleProvider(
+        base_url=str(settings.llm_base_url),
+        api_key=settings.llm_api_key.get_secret_value(),
+        timeout_seconds=settings.llm_request_timeout_seconds,
+        max_retries=settings.llm_max_retries,
+    )
+    embedding = OpenAICompatibleProvider(
+        base_url=str(settings.embedding_base_url),
+        api_key=settings.embedding_api_key.get_secret_value(),
+        timeout_seconds=settings.llm_request_timeout_seconds,
+        max_retries=settings.llm_max_retries,
+    )
+    return ChatOrchestrator(
+        settings=settings,
+        store=store,
+        rate_limiter=RedisRateLimiter(settings),
+        retriever=PostgresHybridRetriever(
+            settings.database_url.get_secret_value(),
+            candidate_limit=settings.retrieval_candidate_limit,
+            rrf_k=settings.rrf_k,
+        ),
+        llm_provider=llm,
+        embedding_provider=embedding,
+    )

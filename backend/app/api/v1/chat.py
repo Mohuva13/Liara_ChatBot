@@ -1,12 +1,19 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import StreamingResponse
 
-from app.api.dependencies import get_readiness_probe, get_runtime_settings
+from app.api.dependencies import (
+    get_chat_orchestrator,
+    get_readiness_probe,
+    get_runtime_settings,
+)
 from app.core.config import Settings
 from app.core.errors import APIError, ErrorResponse
 from app.models.chat import ChatStreamRequest
+from app.services.chat import ChatOrchestrator, ChatPreparationError
 from app.services.readiness import ReadinessProbe
+from app.services.sessions import SessionStoreUnavailable
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
 
@@ -20,9 +27,11 @@ router = APIRouter(prefix="/v1/chat", tags=["chat"])
 )
 async def stream_chat(
     payload: ChatStreamRequest,
+    request: Request,
     probe: Annotated[ReadinessProbe, Depends(get_readiness_probe)],
     settings: Annotated[Settings, Depends(get_runtime_settings)],
-) -> None:
+    orchestrator: Annotated[ChatOrchestrator | None, Depends(get_chat_orchestrator)],
+) -> StreamingResponse:
     if len(payload.text) > settings.max_user_input_chars:
         raise APIError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -45,8 +54,34 @@ async def stream_chat(
             details={"unavailable_components": unavailable},
         )
 
-    raise APIError(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        code="chat_pipeline_unavailable",
-        message="مسیر پاسخ مستند هنوز فعال نشده است.",
+    if orchestrator is None:
+        raise APIError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="chat_pipeline_unavailable",
+            message="مسیر پاسخ مستند هنوز فعال نشده است.",
+        )
+    try:
+        prepared = await orchestrator.prepare(
+            payload, request_id=request.state.request_id
+        )
+    except ChatPreparationError as error:
+        raise APIError(
+            status_code=error.status_code,
+            code=error.code,
+            message=error.message,
+            headers=error.headers,
+        ) from error
+    except SessionStoreUnavailable as error:
+        raise APIError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="session_store_unavailable",
+            message="سرویس نشست موقتاً در دسترس نیست.",
+        ) from error
+    return StreamingResponse(
+        orchestrator.stream(prepared),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store",
+            "X-Accel-Buffering": "no",
+        },
     )

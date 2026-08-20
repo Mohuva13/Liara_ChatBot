@@ -1,8 +1,11 @@
 import json
 import secrets
+import time
 
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.core.logging import telemetry_event
 
 
 class RequestBodyLimitMiddleware:
@@ -98,9 +101,13 @@ class SecurityHeadersMiddleware:
 
         request_id = secrets.token_hex(16)
         scope.setdefault("state", {})["request_id"] = request_id
+        started_at = time.perf_counter()
+        status_code = 500
 
         async def send_with_headers(message: Message) -> None:
+            nonlocal status_code
             if message["type"] == "http.response.start":
+                status_code = int(message["status"])
                 headers = MutableHeaders(scope=message)
                 headers["X-Request-ID"] = request_id
                 headers["X-Content-Type-Options"] = "nosniff"
@@ -111,4 +118,16 @@ class SecurityHeadersMiddleware:
                 )
             await send(message)
 
-        await self._app(scope, receive, send_with_headers)
+        try:
+            await self._app(scope, receive, send_with_headers)
+        finally:
+            route = getattr(scope.get("route"), "path", "unmatched")
+            telemetry_event(
+                "http_request",
+                request_id=request_id,
+                method=scope.get("method", "unknown"),
+                route=route,
+                status_code=status_code,
+                latency_ms=round((time.perf_counter() - started_at) * 1000, 2),
+                outcome="success" if status_code < 400 else "error",
+            )

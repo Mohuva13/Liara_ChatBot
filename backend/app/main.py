@@ -7,7 +7,9 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.sessions import router as sessions_router
 from app.core.config import Settings, get_settings
 from app.core.errors import APIError, ErrorBody, ErrorResponse
+from app.core.logging import configure_logging
 from app.core.middleware import RequestBodyLimitMiddleware, SecurityHeadersMiddleware
+from app.services.chat import ChatOrchestrator, build_chat_orchestrator
 from app.services.readiness import ReadinessProbe
 from app.services.sessions import RedisSessionStore, SessionStore
 
@@ -17,8 +19,10 @@ def create_app(
     settings: Settings | None = None,
     readiness_probe: ReadinessProbe | None = None,
     session_store: SessionStore | None = None,
+    chat_orchestrator: ChatOrchestrator | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
+    configure_logging(resolved_settings.log_level)
     app = FastAPI(
         title="Liara Documentation Assistant API",
         version="0.1.0",
@@ -27,6 +31,9 @@ def create_app(
     )
     app.state.readiness_probe = readiness_probe or ReadinessProbe(resolved_settings)
     app.state.session_store = session_store or RedisSessionStore(resolved_settings)
+    app.state.chat_orchestrator = chat_orchestrator or build_chat_orchestrator(
+        resolved_settings
+    )
 
     app.add_middleware(
         CORSMiddleware,

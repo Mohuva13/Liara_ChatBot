@@ -10,6 +10,7 @@ annotated-types==0.8.0
     # via pydantic
 anyio==4.14.2
     # via
+    #   httpx
     #   httpx2
     #   starlette
     #   watchfiles
@@ -17,6 +18,10 @@ asyncpg==0.31.0
     # via liara-assistant-api (pyproject.toml)
 build==1.5.0
     # via pip-tools
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
 click==8.4.2
     # via
     #   pip-tools
@@ -25,17 +30,23 @@ fastapi==0.141.1
     # via liara-assistant-api (pyproject.toml)
 h11==0.16.0
     # via
+    #   httpcore
     #   httpcore2
     #   uvicorn
+httpcore==1.0.9
+    # via httpx
 httpcore2==2.12.0
     # via httpx2
 httptools==0.8.0
     # via uvicorn
+httpx==0.28.1
+    # via liara-assistant-api (pyproject.toml)
 httpx2==2.12.0
     # via liara-assistant-api (pyproject.toml)
 idna==3.19
     # via
     #   anyio
+    #   httpx
     #   httpx2
 iniconfig==2.3.0
     # via pytest

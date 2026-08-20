@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 
 from app.ingestion.chunker import DocumentChunker
-from app.ingestion.models import IngestionConfig, ParsedDocument
+from app.ingestion.models import Chunk, CorpusSnapshot, IngestionConfig, ParsedDocument
 from app.ingestion.parser import DocumentParseError, parse_document, parse_units
-from app.ingestion.pipeline import scan_corpus
+from app.ingestion.pipeline import embed_snapshot, scan_corpus
 from app.ingestion.redactor import redact_credentials
 from app.retrieval.normalizer import normalize_persian
 
@@ -99,6 +99,119 @@ def test_parser_repairs_generated_unclosed_fence() -> None:
 
     code = next(unit for unit in units if unit.kind == "code")
     assert code.content.endswith("```")
+
+
+@pytest.mark.asyncio
+async def test_embedding_pipeline_batches_and_validates_dimensions() -> None:
+    document = ParsedDocument(
+        stable_id="doc",
+        source_path="public/llms/test.md",
+        canonical_url="https://docs.liara.ir/test/",
+        title="عنوان سند",
+        content="متن",
+        content_hash="doc-hash",
+    )
+    chunks = tuple(
+        Chunk(
+            stable_id=f"chunk-{index}",
+            document_id="doc",
+            ordinal=index,
+            heading_path=("بخش",),
+            content=f"متن {index}",
+            normalized_content=f"متن {index}",
+            content_hash=f"hash-{index}",
+            token_count=2,
+        )
+        for index in range(3)
+    )
+    snapshot = CorpusSnapshot(
+        source_commit="commit",
+        manifest_hash="manifest",
+        documents=(document,),
+        chunks=chunks,
+        discovered=1,
+        skipped=0,
+        failed=0,
+    )
+
+    class FakeEmbeddingProvider:
+        def __init__(self) -> None:
+            self.requests: list[tuple[list[str], str]] = []
+
+        async def embed(
+            self,
+            inputs: list[str],
+            *,
+            model: str,
+            dimensions: int | None,
+            request_id: str,
+        ) -> list[list[float]]:
+            assert model == "embedding-model"
+            assert dimensions == 2
+            self.requests.append((list(inputs), request_id))
+            return [[float(index), 1.0] for index, _ in enumerate(inputs)]
+
+    provider = FakeEmbeddingProvider()
+    vectors = await embed_snapshot(  # type: ignore[arg-type]
+        snapshot,
+        provider,
+        model="embedding-model",
+        dimensions=2,
+        batch_size=2,
+        request_id_prefix="ingest-test",
+    )
+
+    assert len(vectors) == 3
+    assert [request_id for _, request_id in provider.requests] == [
+        "ingest-test-1",
+        "ingest-test-2",
+    ]
+    assert all("عنوان سند" in text for batch, _ in provider.requests for text in batch)
+
+
+@pytest.mark.asyncio
+async def test_embedding_pipeline_rejects_provider_dimension_mismatch() -> None:
+    snapshot = CorpusSnapshot(
+        source_commit="commit",
+        manifest_hash="manifest",
+        documents=(),
+        chunks=(
+            Chunk(
+                stable_id="chunk",
+                document_id="doc",
+                ordinal=0,
+                heading_path=(),
+                content="متن",
+                normalized_content="متن",
+                content_hash="hash",
+                token_count=1,
+            ),
+        ),
+        discovered=1,
+        skipped=0,
+        failed=0,
+    )
+
+    class WrongDimensionProvider:
+        async def embed(
+            self,
+            inputs: list[str],
+            *,
+            model: str,
+            dimensions: int | None,
+            request_id: str,
+        ) -> list[list[float]]:
+            return [[1.0] for _ in inputs]
+
+    with pytest.raises(ValueError, match="dimensions"):
+        await embed_snapshot(  # type: ignore[arg-type]
+            snapshot,
+            WrongDimensionProvider(),
+            model="embedding-model",
+            dimensions=2,
+            batch_size=8,
+            request_id_prefix="ingest-test",
+        )
 
 
 def test_real_corpus_inventory_is_complete() -> None:
