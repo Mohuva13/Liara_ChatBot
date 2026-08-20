@@ -11,7 +11,7 @@ class GroundedClaim(BaseModel):
 class GroundedAnswer(BaseModel):
     answer_markdown: str = Field(min_length=1, max_length=20000)
     claims: list[GroundedClaim] = Field(min_length=1, max_length=30)
-    suggestions: list[str] = Field(default_factory=list, max_length=4)
+    suggestions: list[str] = Field(default_factory=list, max_length=3)
     outcome: Literal["answered"]
 
 

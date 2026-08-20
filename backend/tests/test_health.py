@@ -11,6 +11,7 @@ async def test_liveness_is_lightweight(
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert len(response.headers["x-request-id"]) == 32
 
 
@@ -33,3 +34,15 @@ async def test_readiness_returns_ok_when_every_component_is_ready(
 
     assert response.status_code == 200
     assert response.json()["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_metrics_are_prometheus_compatible_and_exclude_sensitive_data(
+    ready_client: httpx2.AsyncClient,
+) -> None:
+    await ready_client.get("/health/live")
+    response = await ready_client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "liara_http_requests_total" in response.text
+    assert "session_id" not in response.text

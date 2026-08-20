@@ -1,13 +1,16 @@
 import asyncio
 import hashlib
+import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol, cast
 from urllib.parse import urlparse
 
 from app.core.config import Settings
 from app.core.logging import telemetry_event
+from app.core.metrics import metrics
+from app.generation.models import ValidatedAnswer
 from app.generation.prompt import build_grounded_messages
 from app.generation.router import select_model_route
 from app.generation.validator import (
@@ -32,6 +35,7 @@ from app.providers.base import (
 )
 from app.retrieval.evidence import assess_evidence, meaningful_terms
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
+from app.services.response_cache import ResponseCache, response_cache_key
 from app.sessions.models import ReservationResult, SessionState, SessionTurn
 
 
@@ -58,6 +62,12 @@ class ConversationStore(Protocol):
 
     async def record_issue_failure(
         self, session_id: str, issue_key: str
+    ) -> SessionState: ...
+
+    async def set_knowledge_level(
+        self,
+        session_id: str,
+        knowledge_level: Literal["beginner", "intermediate", "advanced"],
     ) -> SessionState: ...
 
 
@@ -109,6 +119,7 @@ class ChatOrchestrator:
         retriever: Retriever,
         llm_provider: AIProvider,
         embedding_provider: AIProvider,
+        response_cache: ResponseCache | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
@@ -116,9 +127,24 @@ class ChatOrchestrator:
         self.retriever = retriever
         self.llm_provider = llm_provider
         self.embedding_provider = embedding_provider
+        self.response_cache = response_cache
+
+    async def aclose(self) -> None:
+        closed: set[int] = set()
+        for provider in (self.llm_provider, self.embedding_provider):
+            if id(provider) in closed:
+                continue
+            closed.add(id(provider))
+            close = getattr(provider, "aclose", None)
+            if close is not None:
+                await cast(Callable[[], Awaitable[None]], close)()
 
     async def prepare(
-        self, payload: ChatStreamRequest, *, request_id: str
+        self,
+        payload: ChatStreamRequest,
+        *,
+        request_id: str,
+        rate_identity: str | None = None,
     ) -> PreparedChat:
         state = await self.store.load(payload.session_id)
         if state is None:
@@ -127,8 +153,17 @@ class ChatOrchestrator:
                 code="session_not_found",
                 message="نشست گفتگو پیدا نشد یا منقضی شده است.",
             )
+        if (
+            payload.knowledge_level is not None
+            and payload.knowledge_level != state.knowledge_level
+        ):
+            state = await self.store.set_knowledge_level(
+                payload.session_id, payload.knowledge_level
+            )
         try:
-            rate = await self.rate_limiter.check(payload.session_id)
+            rate = await self.rate_limiter.check(
+                rate_identity or f"{payload.session_id}:chat"
+            )
         except RateLimitUnavailable as error:
             raise ChatPreparationError(
                 status_code=503,
@@ -136,6 +171,7 @@ class ChatOrchestrator:
                 message="کنترل ظرفیت سرویس موقتاً در دسترس نیست.",
             ) from error
         if not rate.allowed:
+            metrics.increment("liara_rate_limits_total", route="chat")
             raise ChatPreparationError(
                 status_code=429,
                 code="rate_limited",
@@ -166,6 +202,7 @@ class ChatOrchestrator:
     async def stream(self, prepared: PreparedChat) -> AsyncIterator[bytes]:
         payload = prepared.payload
         completed = False
+        stream_started = time.perf_counter()
         try:
             yield ChatEvent(
                 type="message_start",
@@ -188,7 +225,17 @@ class ChatOrchestrator:
                 return
 
             yield ChatEvent(type="status", text="در حال جست‌وجوی مستندات…").to_sse()
+            retrieval_started = time.perf_counter()
             evidence, decision = await self._retrieve(prepared)
+            metrics.increment(
+                "liara_retrieval_latency_milliseconds_total",
+                (time.perf_counter() - retrieval_started) * 1000,
+                outcome="sufficient" if decision.sufficient else decision.reason,
+            )
+            metrics.increment(
+                "liara_retrieval_requests_total",
+                outcome="sufficient" if decision.sufficient else decision.reason,
+            )
             if not decision.sufficient:
                 if len(meaningful_terms(payload.text)) < 3:
                     async for event in self._clarification(prepared, decision.reason):
@@ -220,35 +267,95 @@ class ChatOrchestrator:
                 recent_turns=prepared.state.turns,
                 max_context_tokens=self.settings.max_context_tokens,
             )
-            raw, usage, finish_reason = await self._generate_validated_raw(
-                messages,
-                model=route.model,
-                max_tokens=route.max_output_tokens,
-                request_id=prepared.request_id,
+            cache_key: str | None = None
+            cache_status = "bypass"
+            answer: ValidatedAnswer | None = None
+            usage = ProviderUsage()
+            finish_reason = "cache"
+            raw = ""
+            cache_eligible = (
+                self.response_cache is not None
+                and self.settings.response_cache_ttl_seconds > 0
+                and not prepared.state.turns
+                and not any(
+                    marker in payload.text.casefold() for marker in FAILURE_MARKERS
+                )
             )
-            try:
-                answer = validate_grounded_answer(raw, decision.chunks)
-            except GroundingValidationError:
-                repair = await self._repair(
+            if cache_eligible:
+                cache_key = response_cache_key(
+                    query=payload.text,
+                    intent=prepared.scope.intent.value,
+                    corpus_versions=[chunk.corpus_version for chunk in decision.chunks],
+                    locale=payload.locale,
+                    knowledge_level=prepared.state.knowledge_level,
+                )
+                assert self.response_cache is not None
+                cached = await self.response_cache.get(cache_key)
+                if cached is not None:
+                    try:
+                        answer = validate_grounded_answer(cached, decision.chunks)
+                        cache_status = "hit"
+                    except GroundingValidationError:
+                        cache_status = "invalid"
+                else:
+                    cache_status = "miss"
+
+            if answer is None:
+                if (
+                    self._message_tokens(messages)
+                    > self.settings.max_provider_input_tokens
+                ):
+                    async for event in self._support(
+                        prepared,
+                        reason="token_budget_exceeded",
+                        evidence=evidence,
+                    ):
+                        yield event
+                    completed = True
+                    return
+                raw, usage, finish_reason = await self._generate_validated_raw(
                     messages,
                     model=route.model,
                     max_tokens=route.max_output_tokens,
                     request_id=prepared.request_id,
                 )
-                answer = validate_grounded_answer(repair.text, decision.chunks)
-                usage = ProviderUsage(
-                    input_tokens=usage.input_tokens + repair.usage.input_tokens,
-                    output_tokens=usage.output_tokens + repair.usage.output_tokens,
-                    cached_tokens=usage.cached_tokens + repair.usage.cached_tokens,
-                )
-                finish_reason = repair.finish_reason
+                try:
+                    answer = validate_grounded_answer(raw, decision.chunks)
+                except GroundingValidationError:
+                    repair = await self._repair(
+                        messages,
+                        model=route.model,
+                        max_tokens=route.max_output_tokens,
+                        request_id=prepared.request_id,
+                    )
+                    raw = repair.text
+                    answer = validate_grounded_answer(raw, decision.chunks)
+                    usage = ProviderUsage(
+                        input_tokens=usage.input_tokens + repair.usage.input_tokens,
+                        output_tokens=usage.output_tokens + repair.usage.output_tokens,
+                        cached_tokens=usage.cached_tokens + repair.usage.cached_tokens,
+                        provider_name=repair.usage.provider_name or usage.provider_name,
+                    )
+                    finish_reason = repair.finish_reason
+                if cache_key is not None and self.response_cache is not None:
+                    await self.response_cache.set(
+                        cache_key,
+                        raw,
+                        ttl_seconds=self.settings.response_cache_ttl_seconds,
+                    )
 
             cited = {
                 chunk.chunk_id: chunk
                 for chunk in decision.chunks
                 if chunk.chunk_id in answer.source_ids
             }
-            for text in self._text_chunks(answer.answer_markdown):
+            for index, text in enumerate(self._text_chunks(answer.answer_markdown)):
+                if index == 0:
+                    metrics.increment(
+                        "liara_chat_ttft_milliseconds_total",
+                        (time.perf_counter() - stream_started) * 1000,
+                        model_tier=route.tier,
+                    )
                 yield ChatEvent(type="text_delta", text=text).to_sse()
                 await asyncio.sleep(0)
             sources = [
@@ -266,6 +373,11 @@ class ChatOrchestrator:
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cached_tokens=usage.cached_tokens,
+                    cache_hit=cache_status == "hit",
+                    provider_name=usage.provider_name,
+                    estimated_cost_usd=self._estimated_cost(
+                        route.tier, usage.input_tokens, usage.output_tokens
+                    ),
                 ),
             ).to_sse()
             yield ChatEvent(
@@ -282,10 +394,33 @@ class ChatOrchestrator:
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cached_tokens=usage.cached_tokens,
+                provider_name=usage.provider_name,
+                estimated_cost_usd=self._estimated_cost(
+                    route.tier, usage.input_tokens, usage.output_tokens
+                ),
                 corpus_versions=sorted(
                     {chunk.corpus_version for chunk in cited.values()}
                 ),
-                cache_status="not_implemented",
+                cache_status=cache_status,
+            )
+            metrics.increment(
+                "liara_chat_outcomes_total",
+                outcome="answered",
+                model_tier=route.tier,
+                cache_status=cache_status,
+                provider=usage.provider_name or "cache",
+            )
+            metrics.increment(
+                "liara_provider_tokens_total",
+                usage.input_tokens,
+                direction="input",
+                model_tier=route.tier,
+            )
+            metrics.increment(
+                "liara_provider_tokens_total",
+                usage.output_tokens,
+                direction="output",
+                model_tier=route.tier,
             )
             await self.store.append_turns(
                 payload.session_id,
@@ -308,6 +443,13 @@ class ChatOrchestrator:
                 retryable=False,
             ).to_sse()
         except ProviderFailure as error:
+            metrics.increment(
+                "liara_chat_outcomes_total",
+                outcome=error.code,
+                model_tier="unknown",
+                cache_status="error",
+                provider="unknown",
+            )
             yield ChatEvent(
                 type="error",
                 code=error.code,
@@ -534,6 +676,24 @@ class ChatOrchestrator:
         return [text[index : index + size] for index in range(0, len(text), size)]
 
     @staticmethod
+    def _message_tokens(messages: Sequence[ProviderMessage]) -> int:
+        return sum(max(1, len(message.content) // 4) for message in messages)
+
+    def _estimated_cost(
+        self, tier: str, input_tokens: int, output_tokens: int
+    ) -> float:
+        if tier == "small":
+            input_rate = self.settings.llm_small_input_usd_per_million
+            output_rate = self.settings.llm_small_output_usd_per_million
+        else:
+            input_rate = self.settings.llm_large_input_usd_per_million
+            output_rate = self.settings.llm_large_output_usd_per_million
+        return round(
+            (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000,
+            8,
+        )
+
+    @staticmethod
     def _safe_user_text(text: str) -> str:
         safe, _ = redact_credentials(text)
         return safe[:20000]
@@ -566,21 +726,74 @@ def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
     assert settings.embedding_base_url is not None
     assert settings.embedding_api_key is not None
     from app.providers.openai_compat import OpenAICompatibleProvider
+    from app.providers.resilient import ProviderTarget, ResilientProvider
     from app.retrieval.postgres import PostgresHybridRetriever
+    from app.services.response_cache import RedisResponseCache
     from app.services.sessions import RedisSessionStore
 
     store = RedisSessionStore(settings)
-    llm = OpenAICompatibleProvider(
-        base_url=str(settings.llm_base_url),
-        api_key=settings.llm_api_key.get_secret_value(),
-        timeout_seconds=settings.llm_request_timeout_seconds,
-        max_retries=settings.llm_max_retries,
+    llm_targets = [
+        ProviderTarget(
+            "primary",
+            OpenAICompatibleProvider(
+                base_url=str(settings.llm_base_url),
+                api_key=settings.llm_api_key.get_secret_value(),
+                timeout_seconds=settings.llm_request_timeout_seconds,
+                max_retries=settings.llm_max_retries,
+            ),
+        )
+    ]
+    if settings.llm_backup_api_key is not None:
+        llm_targets.append(
+            ProviderTarget(
+                "backup",
+                OpenAICompatibleProvider(
+                    base_url=str(settings.llm_backup_base_url or settings.llm_base_url),
+                    api_key=settings.llm_backup_api_key.get_secret_value(),
+                    timeout_seconds=settings.llm_request_timeout_seconds,
+                    max_retries=settings.llm_max_retries,
+                ),
+            )
+        )
+    embedding_targets = [
+        ProviderTarget(
+            "primary",
+            OpenAICompatibleProvider(
+                base_url=str(settings.embedding_base_url),
+                api_key=settings.embedding_api_key.get_secret_value(),
+                timeout_seconds=settings.llm_request_timeout_seconds,
+                max_retries=settings.llm_max_retries,
+            ),
+        )
+    ]
+    if settings.embedding_backup_api_key is not None:
+        embedding_targets.append(
+            ProviderTarget(
+                "backup",
+                OpenAICompatibleProvider(
+                    base_url=str(
+                        settings.embedding_backup_base_url
+                        or settings.embedding_base_url
+                    ),
+                    api_key=settings.embedding_backup_api_key.get_secret_value(),
+                    timeout_seconds=settings.llm_request_timeout_seconds,
+                    max_retries=settings.llm_max_retries,
+                ),
+            )
+        )
+    llm = ResilientProvider(
+        llm_targets,
+        failure_threshold=settings.provider_circuit_failure_threshold,
+        reset_seconds=settings.provider_circuit_reset_seconds,
+        concurrency_limit=settings.provider_concurrency_limit,
+        queue_timeout_seconds=settings.provider_queue_timeout_seconds,
     )
-    embedding = OpenAICompatibleProvider(
-        base_url=str(settings.embedding_base_url),
-        api_key=settings.embedding_api_key.get_secret_value(),
-        timeout_seconds=settings.llm_request_timeout_seconds,
-        max_retries=settings.llm_max_retries,
+    embedding = ResilientProvider(
+        embedding_targets,
+        failure_threshold=settings.provider_circuit_failure_threshold,
+        reset_seconds=settings.provider_circuit_reset_seconds,
+        concurrency_limit=settings.provider_concurrency_limit,
+        queue_timeout_seconds=settings.provider_queue_timeout_seconds,
     )
     return ChatOrchestrator(
         settings=settings,
@@ -593,4 +806,5 @@ def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
         ),
         llm_provider=llm,
         embedding_provider=embedding,
+        response_cache=RedisResponseCache(settings),
     )

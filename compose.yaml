@@ -61,6 +61,7 @@ services:
     command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm dev --hostname 0.0.0.0"]
     environment:
       API_INTERNAL_BASE_URL: http://backend:8000
+      API_INTERNAL_TOKEN: ${API_INTERNAL_TOKEN:-}
       WEB_ORIGIN: http://localhost:3000
     depends_on:
       backend:

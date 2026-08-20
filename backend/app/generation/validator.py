@@ -36,7 +36,9 @@ def validate_grounded_answer(
     unique_citations = list(dict.fromkeys(cited))
     if not unique_citations:
         raise GroundingValidationError("answer has no validated citations")
-    suggestions = [item.strip() for item in answer.suggestions if item.strip()][:4]
+    suggestions = list(
+        dict.fromkeys(item.strip() for item in answer.suggestions if item.strip())
+    )[:3]
     return ValidatedAnswer(
         answer_markdown=answer.answer_markdown.strip(),
         source_ids=unique_citations,

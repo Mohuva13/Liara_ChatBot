@@ -22,6 +22,8 @@ type BackendEvent = {
     output_tokens?: number;
     cached_tokens?: number;
     cache_hit?: boolean;
+    provider_name?: "primary" | "backup";
+    estimated_cost_usd?: number;
   };
   finish_reason?: string;
   code?: string;
@@ -157,6 +159,8 @@ export function mapBackendStream(
                 outputTokens: event.usage.output_tokens ?? 0,
                 cachedTokens: event.usage.cached_tokens ?? 0,
                 cacheHit: event.usage.cache_hit ?? false,
+                providerName: event.usage.provider_name,
+                estimatedCostUsd: event.usage.estimated_cost_usd ?? 0,
               },
             }),
           );

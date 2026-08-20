@@ -71,6 +71,10 @@ class OpenAICompatibleProvider:
         status = response.status_code
         if status == 429:
             code = "provider_rate_limited"
+        elif status == 402:
+            code = "provider_quota_exhausted"
+        elif status in {401, 403}:
+            code = "provider_auth_failed"
         elif status in {408, 504}:
             code = "provider_timeout"
         elif status >= 500:
@@ -78,7 +82,9 @@ class OpenAICompatibleProvider:
         else:
             code = "provider_rejected_request"
         raise ProviderFailure(
-            code, retryable=status in {408, 429} or status >= 500, status_code=status
+            code,
+            retryable=status in {401, 402, 403, 408, 429} or status >= 500,
+            status_code=status,
         )
 
     async def _retry_delay(self, attempt: int, response: httpx.Response | None) -> None:
@@ -109,6 +115,9 @@ class OpenAICompatibleProvider:
                 )
                 if response.is_success:
                     return response
+                # Authentication/quota failures cannot recover by retrying the
+                # same credential. Surface them immediately so the resilient
+                # wrapper can switch to a separately configured backup key.
                 retryable = (
                     response.status_code in {408, 429} or response.status_code >= 500
                 )

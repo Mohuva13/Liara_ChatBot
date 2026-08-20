@@ -1,6 +1,9 @@
 import httpx2
 import pytest
 
+from app.core.config import Settings
+from app.main import create_app
+
 VALID_CHAT_REQUEST = {
     "protocol_version": "1",
     "session_id": "test-session-identifier-1234567890",
@@ -9,6 +12,14 @@ VALID_CHAT_REQUEST = {
     "surface": "page",
     "locale": "fa-IR",
 }
+
+
+class LocalSessionStore:
+    async def create(self) -> str:
+        return "test-session-identifier-1234567890"
+
+    async def delete(self, session_id: str) -> bool:
+        return True
 
 
 @pytest.mark.asyncio
@@ -107,3 +118,28 @@ async def test_request_body_limit_rejects_before_parsing(
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "request_too_large"
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_private_api_rejects_missing_internal_token() -> None:
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            app_env="test",
+            api_internal_token="private-placeholder-token",
+        ),
+        session_store=LocalSessionStore(),
+    )
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        denied = await client.post("/v1/sessions")
+        allowed = await client.post(
+            "/v1/sessions",
+            headers={"x-internal-token": "private-placeholder-token"},
+        )
+
+    assert denied.status_code == 401
+    assert denied.headers["x-content-type-options"] == "nosniff"
+    assert allowed.status_code == 201

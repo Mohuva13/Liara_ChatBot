@@ -21,6 +21,8 @@ export type UsageData = {
   outputTokens: number;
   cachedTokens: number;
   cacheHit: boolean;
+  providerName?: "primary" | "backup";
+  estimatedCostUsd: number;
 };
 
 export type SourceDetail = {

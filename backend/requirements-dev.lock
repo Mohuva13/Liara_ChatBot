@@ -14,6 +14,8 @@ anyio==4.14.2
     #   httpx2
     #   starlette
     #   watchfiles
+asgiref==3.12.1
+    # via opentelemetry-instrumentation-asgi
 asyncpg==0.31.0
     # via liara-assistant-api (pyproject.toml)
 build==1.5.0
@@ -22,12 +24,17 @@ certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
+    #   requests
+charset-normalizer==3.5.1
+    # via requests
 click==8.4.2
     # via
     #   pip-tools
     #   uvicorn
 fastapi==0.141.1
     # via liara-assistant-api (pyproject.toml)
+googleapis-common-protos==1.75.1
+    # via opentelemetry-exporter-otlp-proto-http
 h11==0.16.0
     # via
     #   httpcore
@@ -48,6 +55,7 @@ idna==3.19
     #   anyio
     #   httpx
     #   httpx2
+    #   requests
 iniconfig==2.3.0
     # via pytest
 librt==0.15.0
@@ -56,9 +64,48 @@ mypy==1.20.2
     # via liara-assistant-api (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
+opentelemetry-api==1.44.0
+    # via
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-exporter-otlp-proto-common==1.44.0
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.44.0
+    # via liara-assistant-api (pyproject.toml)
+opentelemetry-instrumentation==0.65b0
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-asgi==0.65b0
+    # via opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-fastapi==0.65b0
+    # via liara-assistant-api (pyproject.toml)
+opentelemetry-proto==1.44.0
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.44.0
+    # via
+    #   liara-assistant-api (pyproject.toml)
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.65b0
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-sdk
+opentelemetry-util-http==0.65b0
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
 packaging==26.3
     # via
     #   build
+    #   opentelemetry-instrumentation
     #   pytest
     #   wheel
 pathspec==1.1.1
@@ -67,6 +114,10 @@ pip-tools==7.6.1
     # via liara-assistant-api (pyproject.toml)
 pluggy==1.6.0
     # via pytest
+protobuf==7.36.0
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
 pydantic==2.13.4
     # via
     #   fastapi
@@ -95,6 +146,8 @@ pyyaml==6.0.3
     # via uvicorn
 redis==7.4.1
     # via liara-assistant-api (pyproject.toml)
+requests==2.34.2
+    # via opentelemetry-exporter-otlp-proto-http
 ruff==0.16.4
     # via liara-assistant-api (pyproject.toml)
 starlette==1.6.0
@@ -109,6 +162,10 @@ typing-extensions==4.16.0
     #   fastapi
     #   httpx2
     #   mypy
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
     #   pytest-asyncio
@@ -119,6 +176,8 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
+urllib3==2.7.0
+    # via requests
 uvicorn==0.52.4
     # via liara-assistant-api (pyproject.toml)
 uvloop==0.22.1
@@ -129,6 +188,8 @@ websockets==17.0.1
     # via uvicorn
 wheel==0.48.0
     # via pip-tools
+wrapt==2.3.0
+    # via opentelemetry-instrumentation
 
 # The following packages are considered to be unsafe in a requirements file:
 # pip

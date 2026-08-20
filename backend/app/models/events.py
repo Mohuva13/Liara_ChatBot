@@ -18,6 +18,8 @@ class UsagePayload(BaseModel):
     output_tokens: int = 0
     cached_tokens: int = 0
     cache_hit: bool = False
+    provider_name: Literal["primary", "backup"] | None = None
+    estimated_cost_usd: float = 0
 
 
 class ChatEvent(BaseModel):

@@ -199,3 +199,34 @@ async def test_provider_retries_transient_failure_then_succeeds() -> None:
     assert result.text == "{}"
     assert calls == 2
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_does_not_retry_same_exhausted_credential() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(402)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.test/v1",
+        api_key="test-placeholder-key",
+        timeout_seconds=5,
+        max_retries=2,
+        client=client,
+    )
+
+    with pytest.raises(ProviderFailure) as captured:
+        await provider.complete(
+            [ProviderMessage(role="user", content="test")],
+            model="model",
+            max_output_tokens=10,
+            request_id="request",
+        )
+
+    assert captured.value.code == "provider_quota_exhausted"
+    assert calls == 1
+    await client.aclose()

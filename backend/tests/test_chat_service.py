@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator, Sequence
+from typing import Literal
 
 import pytest
 
@@ -53,6 +54,26 @@ class FakeStore:
             self.state.issue.key = issue_key
             self.state.issue.failure_count = 1
         return self.state
+
+    async def set_knowledge_level(
+        self,
+        session_id: str,
+        knowledge_level: Literal["beginner", "intermediate", "advanced"],
+    ) -> SessionState:
+        self.state.knowledge_level = knowledge_level
+        return self.state
+
+
+class FakeCache:
+    def __init__(self, value: str | None = None) -> None:
+        self.value = value
+        self.saved: str | None = None
+
+    async def get(self, key: str) -> str | None:
+        return self.value
+
+    async def set(self, key: str, value: str, *, ttl_seconds: int) -> None:
+        self.saved = value
 
 
 class FakeRateLimiter:
@@ -292,3 +313,51 @@ async def test_repeated_failure_stays_attached_to_original_issue() -> None:
         payload("هنوز مشکل دارم و حل نشد"), request_id="request-2"
     )
     assert await orchestrator._failure_count(second) == 2
+
+
+@pytest.mark.asyncio
+async def test_explicit_knowledge_level_is_saved_in_session() -> None:
+    store = FakeStore()
+    request = payload("آیا Pgvector لیارا از HNSW پشتیبانی می‌کند؟")
+    request.knowledge_level = "advanced"
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+
+    prepared = await orchestrator.prepare(request, request_id="request")
+
+    assert prepared.state.knowledge_level == "advanced"
+
+
+@pytest.mark.asyncio
+async def test_valid_grounded_cache_hit_skips_generation() -> None:
+    store = FakeStore()
+    llm = FakeProvider()
+    embedding = FakeProvider()
+    cache = FakeCache(FakeProvider.answer())
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=llm,
+        embedding_provider=embedding,
+        response_cache=cache,
+    )
+    prepared = await orchestrator.prepare(
+        payload("آیا Pgvector لیارا از HNSW پشتیبانی می‌کند؟"),
+        request_id="request",
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    usage = next(event["usage"] for event in events if event["type"] == "usage")
+    assert isinstance(usage, dict)
+    assert usage["cache_hit"] is True
+    assert llm.called is False
+    assert embedding.called is True

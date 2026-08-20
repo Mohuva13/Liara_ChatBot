@@ -10,6 +10,11 @@ function internalBaseUrl(): string | null {
   return configured ? configured.replace(/\/$/, "") : null;
 }
 
+function internalHeaders(): Record<string, string> {
+  const token = process.env.API_INTERNAL_TOKEN?.trim();
+  return token ? { "x-internal-token": token } : {};
+}
+
 export async function DELETE(request: Request) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json(
@@ -24,6 +29,7 @@ export async function DELETE(request: Request) {
     try {
       await fetch(`${baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
+        headers: internalHeaders(),
         cache: "no-store",
         signal: request.signal,
       });

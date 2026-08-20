@@ -6,6 +6,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import telemetry_event
+from app.core.metrics import metrics
 
 
 class RequestBodyLimitMiddleware:
@@ -116,6 +117,9 @@ class SecurityHeadersMiddleware:
                 headers["Permissions-Policy"] = (
                     "camera=(), microphone=(), geolocation=()"
                 )
+                headers["Content-Security-Policy"] = (
+                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+                )
             await send(message)
 
         try:
@@ -131,3 +135,53 @@ class SecurityHeadersMiddleware:
                 latency_ms=round((time.perf_counter() - started_at) * 1000, 2),
                 outcome="success" if status_code < 400 else "error",
             )
+            metrics.increment(
+                "liara_http_requests_total",
+                method=str(scope.get("method", "unknown")),
+                route=str(route),
+                status=str(status_code),
+            )
+            metrics.increment(
+                "liara_http_latency_milliseconds_total",
+                (time.perf_counter() - started_at) * 1000,
+                route=str(route),
+            )
+
+
+class InternalAuthMiddleware:
+    def __init__(self, app: ASGIApp, *, token: str | None) -> None:
+        self._app = app
+        self._token = token
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = str(scope.get("path", ""))
+        if scope["type"] != "http" or not path.startswith("/v1/"):
+            await self._app(scope, receive, send)
+            return
+        if self._token is None:
+            await self._app(scope, receive, send)
+            return
+        supplied = next(
+            (
+                value.decode(errors="ignore")
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"x-internal-token"
+            ),
+            "",
+        )
+        if secrets.compare_digest(supplied, self._token):
+            await self._app(scope, receive, send)
+            return
+        body = b'{"error":{"code":"internal_auth_failed","message":"Unauthorized"}}'
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})

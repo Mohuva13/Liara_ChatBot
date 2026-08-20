@@ -62,7 +62,12 @@ async def stream_chat(
         )
     try:
         prepared = await orchestrator.prepare(
-            payload, request_id=request.state.request_id
+            payload,
+            request_id=request.state.request_id,
+            rate_identity=(
+                f"{payload.session_id}:chat:"
+                f"{request.headers.get('x-client-id', 'unknown')[:128]}"
+            ),
         )
     except ChatPreparationError as error:
         raise APIError(

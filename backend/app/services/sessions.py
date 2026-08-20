@@ -1,6 +1,6 @@
 import secrets
 from collections.abc import Callable
-from typing import Protocol
+from typing import Literal, Protocol
 
 from redis.asyncio import Redis
 
@@ -84,6 +84,19 @@ class RedisSessionStore:
             session_id,
             lambda state: self._append_to_state(state, turns),
         )
+
+    async def set_knowledge_level(
+        self,
+        session_id: str,
+        knowledge_level: Literal["beginner", "intermediate", "advanced"],
+    ) -> SessionState:
+        def update(state: SessionState) -> SessionState:
+            if knowledge_level not in {"beginner", "intermediate", "advanced"}:
+                raise ValueError("unsupported knowledge level")
+            state.knowledge_level = knowledge_level
+            return state
+
+        return await self._update_state(session_id, update)
 
     def _append_to_state(
         self, state: SessionState, turns: list[SessionTurn]

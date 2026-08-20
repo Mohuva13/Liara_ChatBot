@@ -22,11 +22,17 @@ Discovery اجباری دو مخزن مرجع انجام و در [`docs/discover
 - session محدود با sliding TTL، reset واقعی، idempotency، distributed rate limit و failure counter همان issue در Redis
 - ingestion واقعی `public/llms/**/*.md`: canonical metadata، redaction، chunking آگاه از code fence، embedding batch و فعال‌سازی atomic نسخه در Pgvector
 - hybrid lexical/trigram + exact-vector retrieval، RRF/rerank، evidence gate و citation فقط از metadata دامنه `docs.liara.ir`
-- adapter قابل‌تعویض OpenAI-compatible برای AvalAI با timeout، retry محدود همراه jitter و model routing
-- liveness/readiness، request limit، CORS/origin validation، security headers و telemetry ساخت‌یافته بدون متن prompt/user
+- adapter OpenAI-compatible با primary/backup key، circuit breaker، bulkhead، timeout، jitter retry و model routing
+- cache پاسخ grounded، token budget، cost estimate و انتخاب سطح پاسخ ساده/متعادل/فنی
+- liveness/readiness، private-hop auth، rate limit، CSP، Prometheus metrics و OTLP tracing بدون متن prompt/user
 - Docker/Liara config، Compose محلی، runbook، threat model، secret scan و eval dataset versioned
 
-وضعیت پذیرش دقیق در [`docs/acceptance-status.md`](./docs/acceptance-status.md) ثبت می‌شود. تست زنده provider، integration واقعی Pgvector/Redis، load/restore drill و release eval تا فراهم‌شدن زیرساخت و یک کلید rotateشده، gate باقی می‌مانند؛ runtime در نبود آن‌ها fail-closed است.
+وضعیت پذیرش دقیق در [`docs/acceptance-status.md`](./docs/acceptance-status.md) و
+[گزارش معیارهای داوری](./docs/reports/final-criteria-report.md) ثبت می‌شود. تست زنده
+provider، integration واقعی Pgvector/Redis، load/restore drill و release eval تا
+فراهم‌شدن زیرساخت و یک کلید rotateشده، gate باقی می‌مانند؛ runtime در نبود آن‌ها
+fail-closed است. [راهنمای جامع استقرار](./docs/runbooks/deployment.md) env matrix،
+ingestion، smoke، مانیتورینگ، alert و rollback را پوشش می‌دهد.
 
 ## اجرای محلی
 

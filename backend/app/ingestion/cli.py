@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.ingestion.models import IngestionConfig
 from app.ingestion.pipeline import ingest_corpus, scan_corpus, snapshot_report
 from app.providers.openai_compat import OpenAICompatibleProvider
+from app.providers.resilient import ProviderTarget, ResilientProvider
 
 
 def source_commit(docs_root: Path) -> str:
@@ -52,11 +53,38 @@ async def run() -> None:
     assert settings.embedding_base_url is not None
     assert settings.embedding_model is not None
     assert settings.embedding_dimensions is not None
-    provider = OpenAICompatibleProvider(
-        base_url=str(settings.embedding_base_url),
-        api_key=settings.embedding_api_key.get_secret_value(),
-        timeout_seconds=settings.llm_request_timeout_seconds,
-        max_retries=settings.llm_max_retries,
+    targets = [
+        ProviderTarget(
+            "primary",
+            OpenAICompatibleProvider(
+                base_url=str(settings.embedding_base_url),
+                api_key=settings.embedding_api_key.get_secret_value(),
+                timeout_seconds=settings.llm_request_timeout_seconds,
+                max_retries=settings.llm_max_retries,
+            ),
+        )
+    ]
+    if settings.embedding_backup_api_key is not None:
+        targets.append(
+            ProviderTarget(
+                "backup",
+                OpenAICompatibleProvider(
+                    base_url=str(
+                        settings.embedding_backup_base_url
+                        or settings.embedding_base_url
+                    ),
+                    api_key=settings.embedding_backup_api_key.get_secret_value(),
+                    timeout_seconds=settings.llm_request_timeout_seconds,
+                    max_retries=settings.llm_max_retries,
+                ),
+            )
+        )
+    provider = ResilientProvider(
+        targets,
+        failure_threshold=settings.provider_circuit_failure_threshold,
+        reset_seconds=settings.provider_circuit_reset_seconds,
+        concurrency_limit=settings.provider_concurrency_limit,
+        queue_timeout_seconds=settings.provider_queue_timeout_seconds,
     )
     try:
         version_id, snapshot = await ingest_corpus(

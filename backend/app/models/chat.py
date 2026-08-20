@@ -10,6 +10,7 @@ class ChatStreamRequest(BaseModel):
     text: str = Field(min_length=1)
     surface: Literal["popup", "page"]
     locale: Literal["fa-IR"]
+    knowledge_level: Literal["beginner", "intermediate", "advanced"] | None = None
 
     @field_validator("session_id", "message_id")
     @classmethod

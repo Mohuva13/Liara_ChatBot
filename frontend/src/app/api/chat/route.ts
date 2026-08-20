@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { UIMessage } from "ai";
 import { cookies } from "next/headers";
@@ -13,6 +13,7 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 type ClientChatBody = {
   messages?: unknown;
   surface?: unknown;
+  knowledgeLevel?: unknown;
 };
 
 type SessionPayload = {
@@ -23,6 +24,18 @@ type SessionPayload = {
 function internalBaseUrl(): string | null {
   const configured = process.env.API_INTERNAL_BASE_URL?.trim();
   return configured ? configured.replace(/\/$/, "") : null;
+}
+
+function internalHeaders(): Record<string, string> {
+  const token = process.env.API_INTERNAL_TOKEN?.trim();
+  return token ? { "x-internal-token": token } : {};
+}
+
+function clientIdentity(request: Request): string {
+  const address =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const salt = process.env.API_INTERNAL_TOKEN?.trim() ?? "local-development";
+  return createHash("sha256").update(`${salt}:${address}`).digest("hex").slice(0, 32);
 }
 
 function latestUserMessage(messages: unknown): UIMessage | null {
@@ -59,7 +72,7 @@ async function createSession(baseUrl: string): Promise<SessionPayload | null> {
   try {
     response = await fetch(`${baseUrl}/v1/sessions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...internalHeaders() },
       cache: "no-store",
     });
   } catch {
@@ -145,6 +158,8 @@ export async function POST(request: Request) {
         "content-type": "application/json",
         accept: "text/event-stream",
         "x-request-id": randomUUID(),
+        "x-client-id": clientIdentity(request),
+        ...internalHeaders(),
       },
       body: JSON.stringify({
         protocol_version: "1",
@@ -153,6 +168,11 @@ export async function POST(request: Request) {
         text,
         surface: body.surface === "popup" ? "popup" : "page",
         locale: "fa-IR",
+        knowledge_level:
+          body.knowledgeLevel === "beginner" ||
+          body.knowledgeLevel === "advanced"
+            ? body.knowledgeLevel
+            : "intermediate",
       }),
       cache: "no-store",
       signal: request.signal,
