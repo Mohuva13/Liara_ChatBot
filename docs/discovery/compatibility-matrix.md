@@ -10,16 +10,18 @@ Snapshot: 2026-08-21
 |---|---|---|
 | Node.js | local `22.23.1`; AI Elements حداقل 18 | Node 22 برای development/CI baseline |
 | pnpm | local `11.19.0` | تنها package manager frontend؛ یک `pnpm-lock.yaml` |
-| Next.js | AI Elements حداقل 14 و App Router پیشنهادی | latest stable حاصل از `create-next-app`; App Router + `src/` |
-| React | AI Elements نیازمند 19 | React 19 |
-| Tailwind CSS | AI Elements نیازمند 4 | Tailwind 4 |
+| Next.js | AI Elements حداقل 14 و App Router پیشنهادی | `16.3.1`; App Router + `src/` |
+| React | AI Elements نیازمند 19 | `19.2.8` |
+| Tailwind CSS | AI Elements نیازمند 4 | `4.3.3` |
 | shadcn/ui | CLI فعلی `init --rtl` را پشتیبانی می‌کند | init یک‌بار، `rtl: true`، بدون `--force` |
 | AI Elements | component source محلی روی shadcn | فقط `message`, `conversation`, `prompt-input`, `sources`, `suggestion` |
-| AI SDK UI | API فعلی transport-based است | `useChat` + `DefaultChatTransport({ api: '/api/chat' })`; render از `parts` |
-| Python | local `3.14.6` | package target `>=3.12,<3.15`; compatibility با resolved deps در CI ثابت شود |
+| AI SDK UI | API فعلی transport-based است | `ai 7.0.69` + `@ai-sdk/react 4.0.72`؛ transport صریح و render از `parts` |
+| Python | local `3.14.6` و `3.11` در دسترس | target `>=3.11,<3.15`؛ test env فعلی Python 3.11 |
 | FastAPI/Pydantic | current stable در lock backend | async API، OpenAPI source of truth، Pydantic v2 settings |
 | PostgreSQL/Pgvector | Liara Pgvector؛ HNSW unsupported | exact baseline؛ IVFFlat فقط پس از benchmark |
 | Redis | سرویس Liara و private network | session/rate/idempotency/cache، TTL configurable |
+
+در این محیط sandbox، Turbopack هنگام production build برای یک worker داخلی امکان bind کردن port نداشت. اسکریپت build از fallback رسمی `next build --webpack` استفاده می‌کند و type-check مستقل TypeScript نیز قبل از build اجرا می‌شود؛ این تصمیم مربوط به ابزار build است و معماری runtime را تغییر نمی‌دهد.
 
 ## منابع compatibility
 

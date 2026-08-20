@@ -1,0 +1,165 @@
+import { randomUUID } from "node:crypto";
+
+import type { UIMessage } from "ai";
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+
+const SESSION_COOKIE = "liara_assistant_session";
+const MAX_REQUEST_BYTES = 64 * 1024;
+
+type ClientChatBody = {
+  messages?: unknown;
+  surface?: unknown;
+};
+
+type SessionPayload = {
+  session_id: string;
+  expires_in_seconds: number;
+};
+
+function internalBaseUrl(): string | null {
+  const configured = process.env.API_INTERNAL_BASE_URL?.trim();
+  return configured ? configured.replace(/\/$/, "") : null;
+}
+
+function latestUserMessage(messages: unknown): UIMessage | null {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index] as Partial<UIMessage>;
+    if (
+      candidate.role === "user" &&
+      typeof candidate.id === "string" &&
+      Array.isArray(candidate.parts)
+    ) {
+      return candidate as UIMessage;
+    }
+  }
+  return null;
+}
+
+function textFromMessage(message: UIMessage): string {
+  return message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+    .trim();
+}
+
+function publicError(status: number, code: string, message: string) {
+  return NextResponse.json({ error: { code, message } }, { status });
+}
+
+async function createSession(baseUrl: string): Promise<SessionPayload | null> {
+  const response = await fetch(`${baseUrl}/v1/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const payload: unknown = await response.json();
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("session_id" in payload) ||
+    !("expires_in_seconds" in payload) ||
+    typeof payload.session_id !== "string" ||
+    typeof payload.expires_in_seconds !== "number"
+  ) {
+    return null;
+  }
+  return payload as SessionPayload;
+}
+
+export async function POST(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+    return publicError(413, "request_too_large", "حجم درخواست بیش از حد مجاز است.");
+  }
+
+  const rawBody = await request.arrayBuffer();
+  if (rawBody.byteLength > MAX_REQUEST_BYTES) {
+    return publicError(413, "request_too_large", "حجم درخواست بیش از حد مجاز است.");
+  }
+
+  const baseUrl = internalBaseUrl();
+  if (baseUrl === null) {
+    return publicError(
+      503,
+      "backend_not_configured",
+      "ارتباط داخلی دستیار پیکربندی نشده است.",
+    );
+  }
+
+  let body: ClientChatBody;
+  try {
+    body = JSON.parse(new TextDecoder().decode(rawBody)) as ClientChatBody;
+  } catch {
+    return publicError(400, "invalid_json", "ساختار درخواست معتبر نیست.");
+  }
+
+  const message = latestUserMessage(body.messages);
+  const text = message ? textFromMessage(message) : "";
+  if (message === null || text.length === 0) {
+    return publicError(422, "invalid_message", "پیام کاربر معتبر نیست.");
+  }
+
+  const cookieStore = await cookies();
+  let sessionId = cookieStore.get(SESSION_COOKIE)?.value;
+  let createdSession: SessionPayload | null = null;
+  if (!sessionId) {
+    createdSession = await createSession(baseUrl);
+    if (createdSession === null) {
+      return publicError(
+        503,
+        "session_unavailable",
+        "نشست گفتگو موقتاً در دسترس نیست.",
+      );
+    }
+    sessionId = createdSession.session_id;
+  }
+
+  const upstream = await fetch(`${baseUrl}/v1/chat/stream`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      "x-request-id": randomUUID(),
+    },
+    body: JSON.stringify({
+      protocol_version: "1",
+      session_id: sessionId,
+      message_id: message.id,
+      text,
+      surface: body.surface === "popup" ? "popup" : "page",
+      locale: "fa-IR",
+    }),
+    cache: "no-store",
+    signal: request.signal,
+  });
+
+  const response = new NextResponse(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "content-type":
+        upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "x-request-id": upstream.headers.get("x-request-id") ?? randomUUID(),
+    },
+  });
+  if (createdSession !== null) {
+    response.cookies.set({
+      name: SESSION_COOKIE,
+      value: createdSession.session_id,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: createdSession.expires_in_seconds,
+    });
+  }
+  return response;
+}
