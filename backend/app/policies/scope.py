@@ -75,4 +75,6 @@ def classify_scope(query: str) -> ScopeDecision:
     for intent, terms in INTENT_TERMS:
         if any(term in normalized for term in terms):
             return ScopeDecision(True, intent, "intent_keyword")
-    return ScopeDecision(True, Intent.EXPLAIN, "retrieval_required")
+    if has_liara_signal:
+        return ScopeDecision(True, Intent.EXPLAIN, "liara_keyword")
+    return ScopeDecision(True, Intent.EXPLAIN, "domain_unverified")

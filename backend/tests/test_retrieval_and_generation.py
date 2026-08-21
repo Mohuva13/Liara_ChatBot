@@ -196,3 +196,30 @@ def test_scope_policy_rejects_explicit_non_liara_topic_without_model() -> None:
 
     assert decision.in_scope is False
     assert decision.intent is Intent.OUT_OF_SCOPE
+
+
+def test_evidence_rejects_results_missing_named_service() -> None:
+    chunk = RetrievedChunk(
+        chunk_id="postgres-doc",
+        document_id="postgres-doc",
+        title="اتصال به PostgreSQL در Python",
+        canonical_url="https://docs.liara.ir/paas/python/postgresql/",
+        heading_path=("اتصال",),
+        content="برنامه Python را با connection string به دیتابیس وصل کنید.",
+        token_count=20,
+        source_commit="commit",
+        corpus_version="version",
+        rerank_score=0.5,
+    )
+
+    decision = assess_evidence(
+        "برای اتصال برنامه به Redis از کدام شبکه استفاده کنم؟",
+        [chunk],
+        min_score=0.025,
+        min_query_coverage=0.2,
+        limit=6,
+        max_tokens=1000,
+    )
+
+    assert decision.sufficient is False
+    assert decision.reason == "missing_entity_coverage"

@@ -123,6 +123,8 @@ class EmptyRetriever:
 class FakeProvider:
     def __init__(self) -> None:
         self.called = False
+        self.stream_called = False
+        self.embed_called = False
 
     async def complete(
         self,
@@ -148,6 +150,7 @@ class FakeProvider:
         request_id: str,
     ) -> AsyncIterator[StreamDelta]:
         self.called = True
+        self.stream_called = True
         yield StreamDelta(text=self.answer())
         yield StreamDelta(
             finish_reason="stop",
@@ -163,6 +166,7 @@ class FakeProvider:
         request_id: str,
     ) -> list[list[float]]:
         self.called = True
+        self.embed_called = True
         return [[0.1, 0.2] for _ in inputs]
 
     @staticmethod
@@ -192,6 +196,27 @@ class FailingEmbeddingProvider(FakeProvider):
         request_id: str,
     ) -> list[list[float]]:
         raise ProviderFailure("provider_unavailable", retryable=True)
+
+
+class AbstainingProvider(FakeProvider):
+    @staticmethod
+    def answer() -> str:
+        return json.dumps(
+            {
+                "answer_markdown": (
+                    "در evidence ارائه‌شده شاهد کافی برای پاسخ وجود ندارد."
+                ),
+                "claims": [
+                    {
+                        "text": "شاهد کافی نیست.",
+                        "source_ids": ["source-1"],
+                    }
+                ],
+                "suggestions": [],
+                "outcome": "answered",
+            },
+            ensure_ascii=False,
+        )
 
 
 def settings() -> Settings:
@@ -331,6 +356,76 @@ async def test_follow_up_retrieval_uses_bounded_session_technology_context() -> 
 
 
 @pytest.mark.asyncio
+async def test_short_clarification_answer_keeps_original_topic_across_turns() -> None:
+    store = FakeStore()
+    store.state.turns = [
+        SessionTurn(
+            role="user",
+            text="برای اتصال امن برنامه به Redis از کدام شبکه استفاده کنم؟",
+        ),
+        SessionTurn(
+            role="assistant",
+            text="پلتفرم برنامه را بگویید.",
+            outcome="clarification:insufficient_query_coverage",
+        ),
+        SessionTurn(role="user", text="پس من چیکار کنم"),
+        SessionTurn(
+            role="assistant",
+            text="نام پلتفرم را بگویید.",
+            outcome="clarification:low_relevance",
+        ),
+    ]
+    retriever = FakeRetriever()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=retriever,
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+    prepared = await orchestrator.prepare(payload("پایتون"), request_id="request")
+
+    await orchestrator._retrieve(prepared)
+
+    assert retriever.last_query is not None
+    assert "Redis" in retriever.last_query
+    assert "پایتون" in retriever.last_query
+
+
+@pytest.mark.asyncio
+async def test_later_referential_follow_up_keeps_topic_and_platform() -> None:
+    store = FakeStore()
+    store.state.turns = [
+        SessionTurn(
+            role="user",
+            text="برای اتصال امن برنامه به Redis از کدام شبکه استفاده کنم؟",
+        ),
+        SessionTurn(role="assistant", text="پلتفرم چیست؟", outcome="clarification:x"),
+        SessionTurn(role="user", text="پایتون"),
+        SessionTurn(role="assistant", text="پاسخ قبلی", outcome="answered"),
+    ]
+    retriever = FakeRetriever()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=retriever,
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+    prepared = await orchestrator.prepare(
+        payload("کجا باید وارد کنم"), request_id="request"
+    )
+
+    await orchestrator._retrieve(prepared)
+
+    assert retriever.last_query is not None
+    assert "Redis" in retriever.last_query
+    assert "python" in retriever.last_query
+
+
+@pytest.mark.asyncio
 async def test_missing_evidence_clarifies_before_offering_support() -> None:
     store = FakeStore()
     orchestrator = ChatOrchestrator(
@@ -360,6 +455,77 @@ async def test_missing_evidence_clarifies_before_offering_support() -> None:
 
 
 @pytest.mark.asyncio
+async def test_named_service_with_unrelated_evidence_goes_directly_to_support() -> None:
+    provider = FakeProvider()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=FakeStore(),
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=provider,
+        embedding_provider=provider,
+    )
+    prepared = await orchestrator.prepare(
+        payload("برای اتصال امن برنامه به Redis از کدام شبکه استفاده کنم؟"),
+        request_id="request",
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    assert any(event["type"] == "support" for event in events)
+    assert not any(event["type"] == "sources" for event in events)
+    assert provider.stream_called is False
+    assert events[-1]["outcome"] == "support"
+
+
+@pytest.mark.asyncio
+async def test_short_follow_up_after_support_stays_terminal_without_provider() -> None:
+    store = FakeStore()
+    store.state.turns = [
+        SessionTurn(role="user", text="اتصال Redis به برنامه Python چطور است؟"),
+        SessionTurn(role="assistant", text="خلاصه تیکت", outcome="support"),
+    ]
+    provider = FakeProvider()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=provider,
+        embedding_provider=provider,
+    )
+    prepared = await orchestrator.prepare(
+        payload("پس من چیکار کنم؟"), request_id="request"
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    assert events[-1]["outcome"] == "support"
+    assert provider.called is False
+
+
+@pytest.mark.asyncio
+async def test_new_liara_topic_after_support_does_not_inherit_old_service() -> None:
+    store = FakeStore()
+    store.state.turns = [
+        SessionTurn(role="user", text="اتصال Redis به برنامه چطور است؟"),
+        SessionTurn(role="assistant", text="خلاصه تیکت", outcome="support"),
+    ]
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+    prepared = await orchestrator.prepare(payload("دامنه چطور؟"), request_id="request")
+
+    assert orchestrator._follows_terminal_support(prepared) is False
+    assert orchestrator._retrieval_query(prepared) == "دامنه چطور؟"
+
+
+@pytest.mark.asyncio
 async def test_out_of_scope_is_deterministic_and_skips_provider() -> None:
     provider = FakeProvider()
     orchestrator = ChatOrchestrator(
@@ -378,6 +544,50 @@ async def test_out_of_scope_is_deterministic_and_skips_provider() -> None:
 
     assert events[-1]["outcome"] == "out_of_scope"
     assert provider.called is False
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_out_of_scope_query_never_calls_answer_model() -> None:
+    provider = FakeProvider()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=FakeStore(),
+        rate_limiter=FakeRateLimiter(),
+        retriever=EmptyRetriever(),
+        llm_provider=provider,
+        embedding_provider=provider,
+    )
+    prepared = await orchestrator.prepare(
+        payload("چطور گیتارم را کوک کنم؟"), request_id="request"
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    assert events[-1]["outcome"] == "out_of_scope"
+    assert provider.stream_called is False
+
+
+@pytest.mark.asyncio
+async def test_model_abstention_is_not_shown_as_grounded_answer() -> None:
+    store = FakeStore()
+    provider = AbstainingProvider()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=provider,
+        embedding_provider=provider,
+    )
+    prepared = await orchestrator.prepare(
+        payload("آیا Pgvector لیارا از HNSW پشتیبانی می‌کند؟"),
+        request_id="request",
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    assert not any(event["type"] == "sources" for event in events)
+    assert events[-1]["outcome"] == "clarification"
 
 
 @pytest.mark.asyncio

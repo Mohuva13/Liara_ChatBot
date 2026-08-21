@@ -199,6 +199,21 @@ EVAL_BASE_URL=https://BACKEND_URL \
 - secret scan، lint، type-check، unit/integration، build و dependency audit سبز؛
 - p95 و cost budget در staging تأیید شود.
 
+### تست state machine مکالمه
+
+در Page و Popup با یک session تازه این مسیرها را smoke کنید:
+
+1. سؤال کامل Redis + شبکه خصوصی باید فقط از اسناد دارای Redis پاسخ بگیرد؛ نتیجه‌ی
+   فنی بدون source مجاز نیست.
+2. پس از سؤال تکمیلی، پاسخ کوتاهی مثل «پایتون» باید ادامه‌ی همان موضوع باشد و سؤال
+   پلتفرم دوباره تکرار نشود.
+3. اگر همان تلاش پس از یک clarification هنوز evidence کافی ندارد، Support/Ticket
+   نمایش داده شود. follow-up کوتاه بعد از Support نباید provider را دوباره صدا بزند.
+4. دومین اعلام صریح شکست برای همان issue باید Ticket را primary کند؛ موضوع جدید
+   نباید شمارنده‌ی قبلی را افزایش دهد.
+5. سؤال قطعی خارج از خدمات لیارا باید outcome برابر `out_of_scope` داشته باشد و
+   answer model فراخوانی نشود.
+
 ## ۸. مانیتورینگ و alert
 
 `/metrics` با bearer token این سیگنال‌های bounded و بدون متن کاربر را ارائه می‌دهد:

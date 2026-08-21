@@ -43,6 +43,8 @@ SEARCH_ALIASES = {
     "postgres": "postgresql",
     "پستگرس": "postgresql",
     "پستگرسکیوال": "postgresql",
+    "پایتون": "python",
+    "ردیس": "redis",
 }
 
 

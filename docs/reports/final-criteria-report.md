@@ -25,9 +25,12 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
 - retrieval ترکیبی lexical/trigram + exact vector، fusion با RRF، rerank محدود،
   evidence relevance/coverage gate و contradiction-aware fallback دارد.
 - هر claim مدل باید source ID معتبر داشته باشد؛ JSON schema و URL/source allowlist
-  پس از generation validate می‌شوند. یک repair محدود وجود دارد و سپس fail-closed.
-- سؤال کم‌اطلاعات clarification، نبود شاهد Support، خارج‌دامنه پاسخ deterministic
-  و دو failure همان issue مسیر Ticket می‌گیرد.
+  پس از generation validate می‌شوند. پاسخ مدل که کمبود evidence را داخل یک پاسخ
+  ظاهراً معتبر پنهان کند نیز رد می‌شود و source نامرتبط نمایش داده نمی‌شود.
+- سؤال کم‌اطلاعات حداکثر یک clarification می‌گیرد؛ تلاش ناموفق بعدی و سؤال مشخصِ
+  بدون شاهد مستقیماً Support می‌شوند. پاسخ کوتاه کاربر به clarification با موضوع
+  اصلی ترکیب می‌شود، Support برای همان موضوع terminal است، و دو failure صریح همان
+  issue مسیر Ticket می‌گیرد.
 - simple/complex model routing، مجموعه golden versioned و runner واقعی
   `scripts/run-release-eval.py` برای pass rate/source recall/MRR/latency وجود دارد.
 
@@ -57,8 +60,9 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
   plan/account/general-docs و scope بدون مصرف مدل طبقه‌بندی می‌شوند.
 - context فقط session-based است: recent turns محدود + factual server summary با
   sliding TTL؛ history کامل browser پذیرفته نمی‌شود.
-- سطح `beginner/intermediate/advanced` از UI قابل انتخاب، در Redis ذخیره و در
-  prompt با facts/citations ثابت و سبک بیان متفاوت اعمال می‌شود.
+- سطح دانش از متن و recent turns همان session استنباط و در prompt با
+  facts/citations ثابت و سبک بیان متفاوت اعمال می‌شود؛ selector دستی در UI وجود
+  ندارد.
 - prompt ادامهٔ فرایند چندمرحله‌ای را از next incomplete step الزام می‌کند؛ answer
   شامل verification و قدم بعدی است.
 - clarification فقط در query کم‌اطلاعات؛ repeated failure per issue و تغییر topic
@@ -113,7 +117,7 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
 
 گیت محلی شامل Ruff، format check، Mypy strict، Pytest، ESLint، TypeScript، Vitest،
 Next production build، secret scan، corpus inventory و dataset validation است.
-در آخرین اجرای ثبت‌شده: ۴۸ تست backend و ۶ تست frontend پاس شدند، scope accuracy
+در آخرین اجرای ثبت‌شده: ۷۲ تست backend و ۶ تست frontend پاس شدند، scope accuracy
 روی ۸ case برابر ۱٫۰ بود، build تولیدی موفق شد، secret scan پاک بود و audit
 وابستگی‌های production در npm و PyPI آسیب‌پذیری شناخته‌شده‌ای گزارش نکرد. QA
 مرورگر production در عرض ۳۲۰ و ۱۴۴۰ بدون overflow بود و Escape/focus-return

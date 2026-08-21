@@ -16,6 +16,7 @@ from app.generation.prompt import build_grounded_messages
 from app.generation.router import select_model_route
 from app.generation.validator import (
     GroundingValidationError,
+    ModelAbstainedError,
     validate_grounded_answer,
 )
 from app.ingestion.redactor import redact_credentials
@@ -117,6 +118,25 @@ RETRIEVAL_CONTEXT_ANCHORS = {
     "python",
     "redis",
 }
+RETRIEVAL_TOPIC_ANCHORS = RETRIEVAL_CONTEXT_ANCHORS | {
+    "دامنه",
+    "dns",
+    "شبکه",
+    "object",
+    "storage",
+    "کوبرنتیز",
+}
+FOLLOW_UP_PREFIXES = (
+    "پس ",
+    "حالا ",
+    "بعد ",
+    "کجا ",
+    "چطور ",
+    "چجوری ",
+    "این ",
+    "اون ",
+    "آن ",
+)
 
 
 class ChatOrchestrator:
@@ -226,6 +246,13 @@ class ChatOrchestrator:
                     yield event
                 completed = True
                 return
+            if self._follows_terminal_support(prepared):
+                async for event in self._support(
+                    prepared, reason="support_continuation", evidence=()
+                ):
+                    yield event
+                completed = True
+                return
 
             yield ChatEvent(type="status", text="در حال جست‌وجوی مستندات…").to_sse()
             retrieval_started = time.perf_counter()
@@ -245,8 +272,19 @@ class ChatOrchestrator:
                         prepared, reason=decision.reason, evidence=evidence
                     ):
                         yield event
-                else:
+                elif (
+                    prepared.scope.reason == "domain_unverified"
+                    and not self._is_contextual_follow_up(prepared)
+                ):
+                    async for event in self._out_of_scope(prepared):
+                        yield event
+                elif self._clarification_can_help(prepared):
                     async for event in self._clarification(prepared, decision.reason):
+                        yield event
+                else:
+                    async for event in self._support(
+                        prepared, reason=decision.reason, evidence=evidence
+                    ):
                         yield event
                 completed = True
                 return
@@ -322,6 +360,13 @@ class ChatOrchestrator:
                 )
                 try:
                     answer = validate_grounded_answer(raw, decision.chunks)
+                except ModelAbstainedError:
+                    async for event in self._grounding_fallback(
+                        prepared, evidence=evidence
+                    ):
+                        yield event
+                    completed = True
+                    return
                 except GroundingValidationError:
                     repair = await self._repair(
                         messages,
@@ -330,7 +375,15 @@ class ChatOrchestrator:
                         request_id=prepared.request_id,
                     )
                     raw = repair.text
-                    answer = validate_grounded_answer(raw, decision.chunks)
+                    try:
+                        answer = validate_grounded_answer(raw, decision.chunks)
+                    except ModelAbstainedError:
+                        async for event in self._grounding_fallback(
+                            prepared, evidence=evidence
+                        ):
+                            yield event
+                        completed = True
+                        return
                     usage = ProviderUsage(
                         input_tokens=usage.input_tokens + repair.usage.input_tokens,
                         output_tokens=usage.output_tokens + repair.usage.output_tokens,
@@ -515,7 +568,7 @@ class ChatOrchestrator:
             )
         evidence = await self.retriever.retrieve(retrieval_query, embedding)
         decision = assess_evidence(
-            prepared.payload.text,
+            retrieval_query,
             evidence,
             min_score=settings.evidence_min_score,
             min_query_coverage=settings.evidence_min_query_coverage,
@@ -526,25 +579,101 @@ class ChatOrchestrator:
 
     @staticmethod
     def _retrieval_query(prepared: PreparedChat) -> str:
+        if not ChatOrchestrator._is_contextual_follow_up(prepared):
+            return prepared.payload.text
+        recent_user_turns = [
+            turn.text
+            for turn in reversed(prepared.state.turns[-12:])
+            if turn.role == "user"
+        ]
+        if not recent_user_turns:
+            return prepared.payload.text
         current_terms = set(retrieval_terms(prepared.payload.text))
-        previous_user = next(
+        anchors: list[str] = []
+        substantive: str | None = None
+        for text in recent_user_turns:
+            terms = retrieval_terms(text)
+            for term in terms:
+                if (
+                    term in RETRIEVAL_CONTEXT_ANCHORS
+                    and term not in current_terms
+                    and term not in anchors
+                    and len(anchors) < 4
+                ):
+                    anchors.append(term)
+            if substantive is None and len(terms) >= 5:
+                substantive = text
+        parts = [prepared.payload.text]
+        if substantive is not None:
+            parts.append(substantive[:500])
+        if anchors:
+            parts.append(" ".join(anchors))
+        return " ".join(parts)[:800]
+
+    @staticmethod
+    def _is_contextual_follow_up(prepared: PreparedChat) -> bool:
+        if not prepared.state.turns:
+            return False
+        previous_assistant = next(
             (
-                turn.text
+                turn
                 for turn in reversed(prepared.state.turns)
-                if turn.role == "user"
+                if turn.role == "assistant"
             ),
             None,
         )
-        if previous_user is None:
-            return prepared.payload.text
-        anchors = [
+        if (
+            previous_assistant is not None
+            and previous_assistant.outcome is not None
+            and previous_assistant.outcome.startswith("clarification:")
+        ):
+            return True
+        normalized = " ".join(prepared.payload.text.casefold().split())
+        terms = retrieval_terms(normalized)
+        current_topics = set(terms) & RETRIEVAL_TOPIC_ANCHORS
+        recent_topics = {
             term
-            for term in retrieval_terms(previous_user)
-            if term in RETRIEVAL_CONTEXT_ANCHORS and term not in current_terms
-        ][:3]
-        if not anchors:
-            return prepared.payload.text
-        return f"{prepared.payload.text} {' '.join(anchors)}"
+            for turn in prepared.state.turns[-12:]
+            if turn.role == "user"
+            for term in retrieval_terms(turn.text)
+            if term in RETRIEVAL_TOPIC_ANCHORS
+        }
+        if (
+            current_topics
+            and recent_topics
+            and current_topics.isdisjoint(recent_topics)
+        ):
+            return False
+        return len(terms) <= 4 or any(
+            normalized.startswith(prefix) for prefix in FOLLOW_UP_PREFIXES
+        )
+
+    @staticmethod
+    def _clarification_can_help(prepared: PreparedChat) -> bool:
+        terms = set(retrieval_terms(prepared.payload.text))
+        if prepared.scope.intent.value == "troubleshoot":
+            return True
+        return not bool(terms & RETRIEVAL_CONTEXT_ANCHORS)
+
+    async def _grounding_fallback(
+        self,
+        prepared: PreparedChat,
+        *,
+        evidence: Sequence[RetrievedChunk],
+    ) -> AsyncIterator[bytes]:
+        if self._follows_retrieval_clarification(prepared):
+            async for event in self._support(
+                prepared, reason="model_abstained", evidence=evidence
+            ):
+                yield event
+        elif self._clarification_can_help(prepared):
+            async for event in self._clarification(prepared, "model_abstained"):
+                yield event
+        else:
+            async for event in self._support(
+                prepared, reason="model_abstained", evidence=evidence
+            ):
+                yield event
 
     async def _generate_validated_raw(
         self,
@@ -691,6 +820,22 @@ class ChatOrchestrator:
             and previous_assistant.outcome.startswith("clarification:")
         )
 
+    @staticmethod
+    def _follows_terminal_support(prepared: PreparedChat) -> bool:
+        if not ChatOrchestrator._is_contextual_follow_up(prepared):
+            return False
+        previous_assistant = next(
+            (
+                turn
+                for turn in reversed(prepared.state.turns)
+                if turn.role == "assistant"
+            ),
+            None,
+        )
+        return bool(
+            previous_assistant is not None and previous_assistant.outcome == "support"
+        )
+
     async def _support(
         self,
         prepared: PreparedChat,
@@ -698,7 +843,8 @@ class ChatOrchestrator:
         reason: str,
         evidence: Sequence[RetrievedChunk],
     ) -> AsyncIterator[bytes]:
-        safe_query, _ = redact_credentials(prepared.payload.text)
+        support_query = self._retrieval_query(prepared)
+        safe_query, _ = redact_credentials(support_query)
         titles = "، ".join(dict.fromkeys(chunk.title for chunk in evidence[:3]))
         summary = f"هدف/سؤال: {safe_query[:500]}"
         if titles:

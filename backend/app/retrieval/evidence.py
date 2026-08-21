@@ -5,6 +5,21 @@ from app.retrieval.normalizer import normalize_persian, retrieval_terms
 
 NEGATIVE_MARKERS = ("پشتیبانی نمی کند", "امکان ندارد", "مجاز نیست")
 POSITIVE_MARKERS = ("پشتیبانی می کند", "امکان دارد", "مجاز است")
+REQUIRED_ENTITY_TERMS = {
+    "django",
+    "docker",
+    "kubernetes",
+    "laravel",
+    "mongodb",
+    "mssql",
+    "mysql",
+    "nextjs",
+    "nodejs",
+    "php",
+    "postgresql",
+    "python",
+    "redis",
+}
 
 
 def meaningful_terms(value: str) -> set[str]:
@@ -50,11 +65,20 @@ def assess_evidence(
 
     query_terms = meaningful_terms(query)
     evidence_terms = (
-        set().union(*(meaningful_terms(chunk.content) for chunk in selected))
+        set().union(
+            *(
+                meaningful_terms(
+                    " ".join((chunk.title, " ".join(chunk.heading_path), chunk.content))
+                )
+                for chunk in selected
+            )
+        )
         if selected
         else set()
     )
     coverage = len(query_terms & evidence_terms) / max(1, len(query_terms))
+    required_entities = query_terms & REQUIRED_ENTITY_TERMS
+    missing_entities = required_entities - evidence_terms
     contradictory = _has_contradiction(selected)
     top_score = selected[0].rerank_score if selected else 0.0
 
@@ -64,6 +88,8 @@ def assess_evidence(
         reason = "contradictory_sources"
     elif top_score < min_score:
         reason = "low_relevance"
+    elif missing_entities:
+        reason = "missing_entity_coverage"
     elif coverage < min_query_coverage:
         reason = "insufficient_query_coverage"
     else:
