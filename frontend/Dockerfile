@@ -1,16 +1,39 @@
 FROM node:22-alpine AS base
 
+ARG PNPM_VERSION=11.19.0
+
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     NEXT_TELEMETRY_DISABLED=1
 
-RUN corepack enable
+RUN set -eu; \
+    corepack enable; \
+    for attempt in 1 2 3; do \
+      if corepack prepare "pnpm@${PNPM_VERSION}" --activate; then \
+        exit 0; \
+      fi; \
+      if [ "$attempt" -eq 3 ]; then \
+        exit 1; \
+      fi; \
+      echo "pnpm download failed (attempt ${attempt}/3); retrying..." >&2; \
+      sleep "$((attempt * 2))"; \
+    done
 WORKDIR /app
 
 FROM base AS dependencies
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN set -eu; \
+    for attempt in 1 2 3; do \
+      if pnpm install --frozen-lockfile; then \
+        exit 0; \
+      fi; \
+      if [ "$attempt" -eq 3 ]; then \
+        exit 1; \
+      fi; \
+      echo "dependency install failed (attempt ${attempt}/3); retrying..." >&2; \
+      sleep "$((attempt * 2))"; \
+    done
 
 FROM base AS builder
 
