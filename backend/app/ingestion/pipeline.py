@@ -282,6 +282,7 @@ async def embed_snapshot(
         raise ValueError("embedding batch size must be positive")
     titles = {document.stable_id: document.title for document in snapshot.documents}
     vectors: list[tuple[float, ...]] = []
+    total_batches = (len(snapshot.chunks) + batch_size - 1) // batch_size
     for offset in range(0, len(snapshot.chunks), batch_size):
         batch_num = offset // batch_size + 1
         batch = snapshot.chunks[offset : offset + batch_size]
@@ -300,6 +301,7 @@ async def embed_snapshot(
         telemetry_event(
             "ingestion_embedding_batch_started",
             batch=batch_num,
+            total_batches=total_batches,
             batch_size=len(batch),
         )
         result = await provider.embed(

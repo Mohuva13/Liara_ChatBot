@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.ingestion.models import IngestionConfig
 from app.ingestion.pipeline import ingest_corpus, scan_corpus, snapshot_report
 from app.providers.openai_compat import OpenAICompatibleProvider
@@ -76,6 +77,7 @@ async def run() -> None:
     parser.add_argument("--activate", action="store_true")
     args = parser.parse_args()
     settings = get_settings()
+    configure_logging(settings.log_level)
     config = IngestionConfig(
         docs_root=settings.docs_repo_path,
         embedding_batch_size=settings.embedding_batch_size,
