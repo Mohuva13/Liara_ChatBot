@@ -5,7 +5,13 @@ import pytest
 import app.ingestion.pipeline as ingestion_pipeline
 from app.ingestion.chunker import DocumentChunker, approximate_token_count
 from app.ingestion.cli import _commit_from_git_metadata
-from app.ingestion.models import Chunk, CorpusSnapshot, IngestionConfig, ParsedDocument
+from app.ingestion.models import (
+    Chunk,
+    CorpusSnapshot,
+    IngestionConfig,
+    MarkdownUnit,
+    ParsedDocument,
+)
 from app.ingestion.parser import DocumentParseError, parse_document, parse_units
 from app.ingestion.pipeline import embed_snapshot, scan_corpus
 from app.ingestion.redactor import redact_credentials
@@ -141,6 +147,36 @@ def test_chunker_splits_long_non_code_line_within_limit() -> None:
     assert len(chunks) > 1
     assert all(chunk.token_count <= 30 for chunk in chunks)
     assert "واژه" in " ".join(chunk.content for chunk in chunks)
+
+
+def test_chunker_disambiguates_repeated_content_deterministically() -> None:
+    document = ParsedDocument(
+        stable_id="doc",
+        source_path="public/llms/test.md",
+        canonical_url="https://docs.liara.ir/test/",
+        title="تست",
+        content="",
+        content_hash="hash",
+    )
+    units = [
+        MarkdownUnit(("اول",), "متن یکسان", "text"),
+        MarkdownUnit(("میانی",), "متن متفاوت", "text"),
+        MarkdownUnit(("آخر",), "متن یکسان", "text"),
+    ]
+    chunker = DocumentChunker(
+        max_tokens=1,
+        min_tokens=1,
+        overlap_tokens=0,
+        token_counter=lambda _: 1,
+    )
+
+    first = chunker.chunk(document, units)
+    second = chunker.chunk(document, units)
+
+    assert len({chunk.stable_id for chunk in first}) == len(first)
+    assert [chunk.stable_id for chunk in first] == [chunk.stable_id for chunk in second]
+    assert first[0].content_hash == first[2].content_hash
+    assert first[0].stable_id != first[2].stable_id
 
 
 def test_token_estimate_accounts_for_long_unbroken_values() -> None:

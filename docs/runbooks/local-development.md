@@ -39,6 +39,8 @@ curl --fail http://localhost:8000/health/ready
 یا توقف process، اجرای بعدی فقط chunkهای فاقد embedding را ادامه می‌دهد.
 Migrationها هنگام شروع ingestion اجرا می‌شوند و constraint مربوط به canonical URL
 را روی volumeهای قدیمی نیز به allowlist دقیق `https://docs.liara.ir/` ارتقا می‌دهند.
+شناسهٔ chunk بر پایهٔ document و content پایدار است و تکرار عمدی یک محتوای یکسان
+در چند heading با occurrence قطعی از هم متمایز می‌شود.
 
 ### اسکریپت‌های مدیریت محلی
 

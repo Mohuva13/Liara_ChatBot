@@ -133,9 +133,15 @@ class DocumentChunker:
                 groups[-2:] = [candidate]
 
         chunks: list[Chunk] = []
+        content_occurrences: dict[str, int] = {}
         for ordinal, group in enumerate(groups):
             content = "\n\n".join(unit.content for unit in group).strip()
             content_hash = hashlib.sha256(content.encode()).hexdigest()
+            occurrence = content_occurrences.get(content_hash, 0)
+            content_occurrences[content_hash] = occurrence + 1
+            stable_key = f"{document.stable_id}:{content_hash}"
+            if occurrence:
+                stable_key = f"{stable_key}:{occurrence}"
             heading_path = next(
                 (unit.heading_path for unit in reversed(group) if unit.heading_path),
                 (),
@@ -149,9 +155,7 @@ class DocumentChunker:
             )
             chunks.append(
                 Chunk(
-                    stable_id=hashlib.sha256(
-                        f"{document.stable_id}:{content_hash}".encode()
-                    ).hexdigest()[:24],
+                    stable_id=hashlib.sha256(stable_key.encode()).hexdigest()[:24],
                     document_id=document.stable_id,
                     ordinal=ordinal,
                     heading_path=heading_path,
