@@ -35,6 +35,8 @@ curl --fail http://localhost:8000/health/ready
 ```
 
 اجرای ingestion همان commit و manifest، embedding یا update تکراری انجام نمی‌دهد. نسخه فقط وقتی فعال می‌شود که همهٔ chunkها vector معتبر داشته باشند.
+هر batch موفق بلافاصله در PostgreSQL checkpoint می‌شود؛ در صورت قطع VPN، timeout
+یا توقف process، اجرای بعدی فقط chunkهای فاقد embedding را ادامه می‌دهد.
 
 ### اسکریپت‌های مدیریت محلی
 

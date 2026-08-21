@@ -2,12 +2,14 @@ from pathlib import Path
 
 import pytest
 
+import app.ingestion.pipeline as ingestion_pipeline
 from app.ingestion.chunker import DocumentChunker, approximate_token_count
 from app.ingestion.cli import _commit_from_git_metadata
 from app.ingestion.models import Chunk, CorpusSnapshot, IngestionConfig, ParsedDocument
 from app.ingestion.parser import DocumentParseError, parse_document, parse_units
 from app.ingestion.pipeline import embed_snapshot, scan_corpus
 from app.ingestion.redactor import redact_credentials
+from app.providers.base import ProviderFailure
 from app.retrieval.normalizer import normalize_persian
 
 
@@ -270,6 +272,166 @@ async def test_embedding_pipeline_rejects_provider_dimension_mismatch() -> None:
             batch_size=8,
             request_id_prefix="ingest-test",
         )
+
+
+@pytest.mark.asyncio
+async def test_ingestion_checkpoints_batches_and_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = ParsedDocument(
+        stable_id="doc",
+        source_path="public/llms/test.md",
+        canonical_url="https://docs.liara.ir/test/",
+        title="عنوان سند",
+        content="متن",
+        content_hash="doc-hash",
+    )
+    chunks = tuple(
+        Chunk(
+            stable_id=f"chunk-{index}",
+            document_id="doc",
+            ordinal=index,
+            heading_path=("بخش",),
+            content=f"متن {index}",
+            normalized_content=f"متن {index}",
+            content_hash=f"hash-{index}",
+            token_count=2,
+        )
+        for index in range(3)
+    )
+    snapshot = CorpusSnapshot(
+        source_commit="commit",
+        manifest_hash="manifest",
+        documents=(document,),
+        chunks=chunks,
+        discovered=1,
+        skipped=0,
+        failed=0,
+    )
+
+    class FakeRepository:
+        def __init__(self) -> None:
+            self.embedded: set[str] = set()
+            self.finalized = False
+
+        async def apply_migrations(self, migrations_dir: Path) -> None:
+            return None
+
+        async def prepare(
+            self,
+            prepared_snapshot: CorpusSnapshot,
+            *,
+            embedding_model: str,
+            embedding_dimensions: int,
+        ) -> tuple[str, str]:
+            return "version", "parsed"
+
+        async def pending_chunks(
+            self, version_id: str, prepared_snapshot: CorpusSnapshot
+        ) -> tuple[Chunk, ...]:
+            return tuple(
+                chunk
+                for chunk in prepared_snapshot.chunks
+                if chunk.stable_id not in self.embedded
+            )
+
+        async def store_embedding_batch(
+            self,
+            version_id: str,
+            stored_chunks: tuple[Chunk, ...],
+            embeddings: list[list[float]],
+            dimensions: int,
+        ) -> int:
+            self.embedded.update(chunk.stable_id for chunk in stored_chunks)
+            return len(self.embedded)
+
+        async def finalize(
+            self,
+            version_id: str,
+            finalized_snapshot: CorpusSnapshot,
+            *,
+            embedding_model: str,
+            embedding_dimensions: int,
+            activate: bool,
+        ) -> None:
+            assert self.embedded == {chunk.stable_id for chunk in chunks}
+            self.finalized = True
+
+    class InterruptingProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def embed(
+            self,
+            inputs: list[str],
+            *,
+            model: str,
+            dimensions: int | None,
+            request_id: str,
+        ) -> list[list[float]]:
+            self.calls += 1
+            if self.calls == 2:
+                raise ProviderFailure("provider_unavailable", retryable=True)
+            return [[1.0, 2.0] for _ in inputs]
+
+    class SuccessfulProvider:
+        def __init__(self) -> None:
+            self.inputs: list[str] = []
+
+        async def embed(
+            self,
+            inputs: list[str],
+            *,
+            model: str,
+            dimensions: int | None,
+            request_id: str,
+        ) -> list[list[float]]:
+            self.inputs.extend(inputs)
+            return [[1.0, 2.0] for _ in inputs]
+
+    repository = FakeRepository()
+    monkeypatch.setattr(ingestion_pipeline, "scan_corpus", lambda *_: snapshot)
+
+    async def scan_without_thread(function: object, *args: object) -> CorpusSnapshot:
+        del function, args
+        return snapshot
+
+    monkeypatch.setattr(ingestion_pipeline.asyncio, "to_thread", scan_without_thread)
+    monkeypatch.setattr(
+        ingestion_pipeline,
+        "PostgresCorpusRepository",
+        lambda database_url: repository,
+    )
+    config = IngestionConfig(docs_root=tmp_path, embedding_batch_size=2)
+
+    with pytest.raises(ProviderFailure, match="provider_unavailable"):
+        await ingestion_pipeline.ingest_corpus(
+            config,
+            "commit",
+            "postgresql://test",
+            tmp_path,
+            InterruptingProvider(),  # type: ignore[arg-type]
+            "embedding-model",
+            2,
+            activate=True,
+        )
+
+    assert repository.embedded == {"chunk-0", "chunk-1"}
+    resumed_provider = SuccessfulProvider()
+    version_id, _ = await ingestion_pipeline.ingest_corpus(
+        config,
+        "commit",
+        "postgresql://test",
+        tmp_path,
+        resumed_provider,  # type: ignore[arg-type]
+        "embedding-model",
+        2,
+        activate=True,
+    )
+
+    assert version_id == "version"
+    assert len(resumed_provider.inputs) == 1
+    assert repository.finalized is True
 
 
 def test_real_corpus_inventory_is_complete() -> None:

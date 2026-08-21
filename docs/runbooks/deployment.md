@@ -131,6 +131,10 @@ Ingestion تعداد فایل‌ها را در هر اجرا محاسبه می�
 نمی‌شود؛ سند PostgreSQL لیارا صریحاً نبود پشتیبانی HNSW را ذکر می‌کند و انتخاب
 فعلی exact search است. IVFFlat فقط پس از benchmark مجاز است.
 
+Embedding هر batch در نسخهٔ غیرفعال corpus checkpoint می‌شود. شکست provider یا
+قطع runner نسخه را active نمی‌کند و اجرای بعدی فقط chunkهای ناقص را resume
+می‌کند؛ تغییر model یا dimensions هنگام resume عمداً fail-closed است.
+
 ## ۶. انتشار برنامه‌ها
 
 ### Backend
