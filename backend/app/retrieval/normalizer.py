@@ -36,6 +36,10 @@ SEARCH_STOP_WORDS = {
     "یا",
 }
 SEARCH_ALIASES = {
+    "node": "nodejs",
+    "node.js": "nodejs",
+    "next": "nextjs",
+    "next.js": "nextjs",
     "postgres": "postgresql",
     "پستگرس": "postgresql",
     "پستگرسکیوال": "postgresql",

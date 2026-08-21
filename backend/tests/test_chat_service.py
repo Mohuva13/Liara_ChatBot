@@ -87,10 +87,12 @@ class FakeRateLimiter:
 class FakeRetriever:
     def __init__(self) -> None:
         self.last_embedding: Sequence[float] | None | object = "unset"
+        self.last_query: str | None = None
 
     async def retrieve(
         self, query: str, embedding: Sequence[float] | None
     ) -> list[RetrievedChunk]:
+        self.last_query = query
         self.last_embedding = embedding
         return [
             RetrievedChunk(
@@ -299,6 +301,33 @@ async def test_query_embedding_failure_falls_back_to_lexical_retrieval() -> None
 
     assert retriever.last_embedding is None
     assert events[-1]["outcome"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_follow_up_retrieval_uses_bounded_session_technology_context() -> None:
+    store = FakeStore()
+    store.state.turns = [
+        SessionTurn(role="user", text="برنامه Node.js من به PostgreSQL لیارا وصل است"),
+        SessionTurn(role="assistant", text="اتصال برقرار شد", outcome="answered"),
+    ]
+    retriever = FakeRetriever()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=retriever,
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+    prepared = await orchestrator.prepare(
+        payload("Connection pooling چطوریه؟"), request_id="request"
+    )
+
+    await orchestrator._retrieve(prepared)
+
+    assert retriever.last_query is not None
+    assert "nodejs" in retriever.last_query
+    assert "postgresql" in retriever.last_query
 
 
 @pytest.mark.asyncio

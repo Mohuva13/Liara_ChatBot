@@ -36,6 +36,7 @@ from app.providers.base import (
 )
 from app.retrieval.evidence import assess_evidence
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
+from app.retrieval.normalizer import retrieval_terms
 from app.services.response_cache import ResponseCache, response_cache_key
 from app.sessions.models import ReservationResult, SessionState, SessionTurn
 
@@ -102,6 +103,20 @@ FAILURE_MARKERS = (
     "نتیجه نداد",
     "هنوز مشکل دارم",
 )
+RETRIEVAL_CONTEXT_ANCHORS = {
+    "django",
+    "docker",
+    "laravel",
+    "mongodb",
+    "mssql",
+    "mysql",
+    "nextjs",
+    "nodejs",
+    "php",
+    "postgresql",
+    "python",
+    "redis",
+}
 
 
 class ChatOrchestrator:
@@ -473,12 +488,13 @@ class ChatOrchestrator:
         self, prepared: PreparedChat
     ) -> tuple[list[RetrievedChunk], EvidenceDecision]:
         settings = self.settings
+        retrieval_query = self._retrieval_query(prepared)
         embedding: Sequence[float] | None = None
         fallback_reason: str | None = None
         try:
             async with asyncio.timeout(settings.query_embedding_timeout_seconds):
                 vectors = await self.embedding_provider.embed(
-                    [prepared.payload.text],
+                    [retrieval_query],
                     model=self._required(settings.embedding_model),
                     dimensions=settings.embedding_dimensions,
                     request_id=prepared.request_id,
@@ -497,7 +513,7 @@ class ChatOrchestrator:
             metrics.increment(
                 "liara_query_embedding_fallback_total", reason=fallback_reason
             )
-        evidence = await self.retriever.retrieve(prepared.payload.text, embedding)
+        evidence = await self.retriever.retrieve(retrieval_query, embedding)
         decision = assess_evidence(
             prepared.payload.text,
             evidence,
@@ -507,6 +523,28 @@ class ChatOrchestrator:
             max_tokens=settings.max_evidence_tokens,
         )
         return evidence, decision
+
+    @staticmethod
+    def _retrieval_query(prepared: PreparedChat) -> str:
+        current_terms = set(retrieval_terms(prepared.payload.text))
+        previous_user = next(
+            (
+                turn.text
+                for turn in reversed(prepared.state.turns)
+                if turn.role == "user"
+            ),
+            None,
+        )
+        if previous_user is None:
+            return prepared.payload.text
+        anchors = [
+            term
+            for term in retrieval_terms(previous_user)
+            if term in RETRIEVAL_CONTEXT_ANCHORS and term not in current_terms
+        ][:3]
+        if not anchors:
+            return prepared.payload.text
+        return f"{prepared.payload.text} {' '.join(anchors)}"
 
     async def _generate_validated_raw(
         self,
