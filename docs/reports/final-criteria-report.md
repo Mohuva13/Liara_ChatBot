@@ -117,7 +117,7 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
 
 گیت محلی شامل Ruff، format check، Mypy strict، Pytest، ESLint، TypeScript، Vitest،
 Next production build، secret scan، corpus inventory و dataset validation است.
-در آخرین اجرای ثبت‌شده: ۷۶ تست backend و ۶ تست frontend پاس شدند، scope accuracy
+در آخرین اجرای ثبت‌شده: ۷۸ تست backend و ۶ تست frontend پاس شدند، scope accuracy
 روی ۸ case برابر ۱٫۰ بود، build تولیدی موفق شد، secret scan پاک بود و audit
 وابستگی‌های production در npm و PyPI آسیب‌پذیری شناخته‌شده‌ای گزارش نکرد. QA
 مرورگر production در عرض ۳۲۰ و ۱۴۴۰ بدون overflow بود و Escape/focus-return

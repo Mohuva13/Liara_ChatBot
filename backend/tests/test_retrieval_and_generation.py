@@ -103,6 +103,77 @@ def test_evidence_requires_relevance_and_query_coverage() -> None:
     assert decision.reason == "sufficient"
 
 
+def test_pgvector_approximate_search_and_hnsw_limit_are_not_contradictory() -> None:
+    chunks = [
+        RetrievedChunk(
+            chunk_id="extensions",
+            document_id="extensions",
+            title="آشنایی با افزونه‌های PostgreSQL",
+            canonical_url="https://docs.liara.ir/dbaas/postgresql/extensions/",
+            heading_path=("افزونه Pgvector چیست؟",),
+            content=(
+                "این افزونه از موارد زیر پشتیبانی می‌کند: جستجوی نزدیک‌ترین "
+                "همسایه دقیق و تقریبی و فاصله‌های مختلف."
+            ),
+            token_count=30,
+            source_commit="commit",
+            corpus_version="version",
+            rerank_score=0.1,
+        ),
+        RetrievedChunk(
+            chunk_id="quick-setup",
+            document_id="quick-setup",
+            title="راه‌اندازی سریع PostgreSQL",
+            canonical_url="https://docs.liara.ir/dbaas/postgresql/quick-setup/",
+            heading_path=("استفاده از افزونه‌ها",),
+            content="افزونه Pgvector لیارا از قابلیت HNSW indexing پشتیبانی نمی‌کند.",
+            token_count=20,
+            source_commit="commit",
+            corpus_version="version",
+            rerank_score=0.1,
+        ),
+    ]
+
+    decision = assess_evidence(
+        "Pgvector در PostgreSQL چه محدودیتی دارد؟",
+        chunks,
+        min_score=0.025,
+        min_query_coverage=0.35,
+        limit=6,
+        max_tokens=5000,
+    )
+
+    assert decision.contradictory is False
+    assert decision.sufficient is True
+
+
+def test_evidence_detects_opposite_claims_about_same_named_capability() -> None:
+    positive = chunk(
+        "positive",
+        "Pgvector از HNSW indexing پشتیبانی می‌کند.",
+        document="positive-doc",
+        score=0.1,
+    )
+    negative = chunk(
+        "negative",
+        "Pgvector از HNSW indexing پشتیبانی نمی‌کند.",
+        document="negative-doc",
+        score=0.1,
+    )
+
+    decision = assess_evidence(
+        "آیا Pgvector از HNSW پشتیبانی می‌کند؟",
+        [positive, negative],
+        min_score=0.025,
+        min_query_coverage=0.35,
+        limit=6,
+        max_tokens=5000,
+    )
+
+    assert decision.contradictory is True
+    assert decision.reason == "contradictory_sources"
+
+
 def test_casual_postgres_pooling_query_passes_with_lexical_evidence() -> None:
     query = "Connection pooling توی postgres چطوریه"
     ranked = rerank(

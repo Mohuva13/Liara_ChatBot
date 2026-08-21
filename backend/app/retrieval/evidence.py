@@ -1,3 +1,4 @@
+import re
 from collections.abc import Sequence
 
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
@@ -9,28 +10,70 @@ from app.retrieval.normalizer import (
 
 NEGATIVE_MARKERS = ("پشتیبانی نمی کند", "امکان ندارد", "مجاز نیست")
 POSITIVE_MARKERS = ("پشتیبانی می کند", "امکان دارد", "مجاز است")
+SENTENCE_BOUNDARY = re.compile(r"[\n.!؟؛]+")
+POLARITY_NOISE_TERMS = {
+    "آن",
+    "این",
+    "افزونه",
+    "است",
+    "امکان",
+    "پشتیبانی",
+    "قابلیت",
+    "کند",
+    "می",
+    "مجاز",
+    "موارد",
+    "نمی",
+    "نیست",
+    "هست",
+}
 
 
 def meaningful_terms(value: str) -> set[str]:
     return set(retrieval_terms(value))
 
 
+def _polarized_subjects(content: str, markers: Sequence[str]) -> list[set[str]]:
+    subjects: list[set[str]] = []
+    for sentence in SENTENCE_BOUNDARY.split(normalize_persian(content)):
+        if not any(marker in sentence for marker in markers):
+            continue
+        terms = meaningful_terms(sentence) - POLARITY_NOISE_TERMS
+        if terms:
+            subjects.append(terms)
+    return subjects
+
+
+def _same_proposition(left: set[str], right: set[str]) -> bool:
+    shared = left & right
+    return bool(shared) and len(shared) / max(1, len(left | right)) >= 0.6
+
+
 def _has_contradiction(chunks: Sequence[RetrievedChunk]) -> bool:
-    for index, left in enumerate(chunks):
-        left_text = normalize_persian(left.content)
-        left_terms = meaningful_terms(left.content)
-        for right in chunks[index + 1 :]:
-            if left.document_id == right.document_id:
+    polarities = [
+        (
+            chunk.document_id,
+            _polarized_subjects(chunk.content, NEGATIVE_MARKERS),
+            _polarized_subjects(chunk.content, POSITIVE_MARKERS),
+        )
+        for chunk in chunks
+    ]
+    for index, (left_document, left_negative, left_positive) in enumerate(polarities):
+        for right_document, right_negative, right_positive in polarities[index + 1 :]:
+            if left_document == right_document:
                 continue
-            right_text = normalize_persian(right.content)
-            shared = left_terms & meaningful_terms(right.content)
-            if len(shared) < 3:
-                continue
-            left_negative = any(marker in left_text for marker in NEGATIVE_MARKERS)
-            right_negative = any(marker in right_text for marker in NEGATIVE_MARKERS)
-            left_positive = any(marker in left_text for marker in POSITIVE_MARKERS)
-            right_positive = any(marker in right_text for marker in POSITIVE_MARKERS)
-            if (left_negative and right_positive) or (right_negative and left_positive):
+            opposing = (
+                (negative, positive)
+                for negatives, positives in (
+                    (left_negative, right_positive),
+                    (right_negative, left_positive),
+                )
+                for negative in negatives
+                for positive in positives
+            )
+            if any(
+                _same_proposition(negative, positive) for negative, positive in opposing
+            ):
                 return True
     return False
 
