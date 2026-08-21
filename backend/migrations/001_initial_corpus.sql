@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS documents (
     version_id uuid NOT NULL REFERENCES corpus_versions(id) ON DELETE CASCADE,
     stable_id text NOT NULL,
     source_path text NOT NULL,
-    canonical_url text NOT NULL CHECK (canonical_url ~ '^https://docs\\.liara\\.ir/'),
+    canonical_url text NOT NULL CHECK (
+        canonical_url LIKE 'https://docs.liara.ir/%'
+    ),
     title text NOT NULL,
     content_hash text NOT NULL,
     language text NOT NULL DEFAULT 'fa',

@@ -44,6 +44,20 @@ def test_parse_document_rejects_non_liara_canonical_url(tmp_path: Path) -> None:
         parse_document(path, tmp_path)
 
 
+def test_canonical_url_database_constraint_accepts_official_docs_only() -> None:
+    migrations_dir = Path(__file__).parents[1] / "migrations"
+    initial = (migrations_dir / "001_initial_corpus.sql").read_text(encoding="utf-8")
+    repair = (migrations_dir / "002_fix_canonical_url_constraint.sql").read_text(
+        encoding="utf-8"
+    )
+
+    expected = "canonical_url LIKE 'https://docs.liara.ir/%'"
+    assert expected in initial
+    assert expected in repair
+    assert "DROP CONSTRAINT IF EXISTS documents_canonical_url_check" in repair
+    assert "strpos(constraint_definition, 'https://docs.liara.ir/%')" in repair
+
+
 def test_redaction_preserves_names_and_code_structure() -> None:
     source = (
         'DATABASE_PASSWORD="actual-example-password"\n'
