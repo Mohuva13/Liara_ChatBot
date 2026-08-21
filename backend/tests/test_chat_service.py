@@ -123,6 +123,7 @@ class EmptyRetriever:
 class FakeProvider:
     def __init__(self) -> None:
         self.called = False
+        self.complete_called = False
         self.stream_called = False
         self.embed_called = False
 
@@ -135,6 +136,8 @@ class FakeProvider:
         request_id: str,
         json_mode: bool = False,
     ) -> CompletionResult:
+        self.called = True
+        self.complete_called = True
         return CompletionResult(
             text=self.answer(),
             finish_reason="stop",
@@ -229,6 +232,8 @@ class InvalidGenerationProvider(FakeProvider):
         request_id: str,
         json_mode: bool = False,
     ) -> CompletionResult:
+        self.called = True
+        self.complete_called = True
         return CompletionResult(
             text="not-json",
             finish_reason="stop",
@@ -674,6 +679,8 @@ async def test_invalid_provider_json_uses_safe_extractive_fact() -> None:
     assert "HNSW" in answer_text
     assert any(event["type"] == "sources" for event in events)
     assert not any(event["type"] == "error" for event in events)
+    assert provider.complete_called is True
+    assert provider.stream_called is False
     assert events[-1]["outcome"] == "answered"
 
 

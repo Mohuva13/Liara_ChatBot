@@ -182,6 +182,10 @@ LLM_SMALL_MODEL=<verified-model> EMBEDDING_MODEL=<verified-model> \
 اسکریپت در terminal مقدار را با prompt مخفی می‌گیرد. برای CI مقدار باید از Secret
 store به environment تزریق شود.
 
+مسیر generation عمداً completion غیرstream با `response_format=json_object` را
+تست می‌کند. پاسخ ساختاریافته پیش از نمایش باید کامل validate شود؛ بنابراین سالم
+بودن embedding به‌تنهایی یا موفقیت یک stream خام، smoke کافی برای چت نیست.
+
 سپس release eval واقعی را روی backend آماده اجرا کنید:
 
 ```bash

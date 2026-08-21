@@ -84,6 +84,9 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
 - provider timeout، retry با jitter، عدم retry credential منقضی روی همان key،
   primary/backup failover، circuit breaker، bulkhead/queue timeout و stream-safe
   buffering دارد.
+- generation ساختاریافته از completion غیرstream با JSON mode استفاده می‌کند؛ چون
+  پاسخ پیش از نمایش باید به‌طور کامل grounding-validate شود. UI متن تأییدشده را
+  chunk می‌کند و به streaming ناسازگار provider وابسته نیست.
 - structured JSON logs بدون user text/prompt/chunk/PII؛ correlation ID، route،
   latency، outcome، model، token، cache، provider و corpus version ثبت می‌شود.
 - Prometheus endpoint حفاظت‌شده و OpenTelemetry OTLP exporter اختیاری؛ metrics

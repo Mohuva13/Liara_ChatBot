@@ -668,21 +668,14 @@ class ChatOrchestrator:
         max_tokens: int,
         request_id: str,
     ) -> tuple[str, ProviderUsage, str]:
-        parts: list[str] = []
-        usage = ProviderUsage()
-        finish_reason = "unknown"
-        async for delta in self.llm_provider.stream(
+        result = await self.llm_provider.complete(
             messages,
             model=model,
             max_output_tokens=max_tokens,
             request_id=request_id,
-        ):
-            parts.append(delta.text)
-            if delta.usage is not None:
-                usage = delta.usage
-            if delta.finish_reason is not None:
-                finish_reason = delta.finish_reason
-        return "".join(parts), usage, finish_reason
+            json_mode=True,
+        )
+        return result.text, result.usage, result.finish_reason
 
     async def _generate_answer(
         self,
