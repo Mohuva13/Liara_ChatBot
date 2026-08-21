@@ -70,6 +70,7 @@ Internet -> Next.js frontend -> private HTTP -> FastAPI backend
 | `LLM_BACKUP_API_KEY` | Secret backup مستقل |
 | `LLM_SMALL_MODEL` | model تأییدشده در smoke test |
 | `LLM_LARGE_MODEL` | model تأییدشده در smoke test |
+| `PROVIDER_CONNECT_TIMEOUT_SECONDS` | سقف اتصال شبکه؛ baseline برابر `10` |
 | `EMBEDDING_BASE_URL` | endpoint embedding |
 | `EMBEDDING_API_KEY` | Secret embedding primary |
 | `EMBEDDING_BACKUP_BASE_URL` | endpoint embedding backup |
@@ -78,6 +79,7 @@ Internet -> Next.js frontend -> private HTTP -> FastAPI backend
 | `EMBEDDING_DIMENSIONS` | dimension واقعی پاسخ provider و migration |
 | `EMBEDDING_BATCH_SIZE` | baseline برابر `16`؛ افزایش فقط پس از benchmark provider |
 | `EMBEDDING_REQUEST_TIMEOUT_SECONDS` | timeout مستقل embedding؛ baseline برابر `120` |
+| `QUERY_EMBEDDING_TIMEOUT_SECONDS` | بودجهٔ embedding تعاملی؛ baseline برابر `8` و سپس lexical fallback |
 | `METRICS_BEARER_TOKEN` | Secret مستقل برای scrape کردن `/metrics` |
 
 ### Backend — policy/cost tuning
@@ -88,6 +90,11 @@ Internet -> Next.js frontend -> private HTTP -> FastAPI backend
 `MAX_PROVIDER_INPUT_TOKENS=16000`، `MAX_OUTPUT_TOKENS_SMALL=700` و
 `MAX_OUTPUT_TOKENS_LARGE=1200` baselineهای versioned هستند. تغییر آن‌ها باید با
 eval و cost report همراه باشد.
+
+در مسیر chat، query embedding کند یا ناموجود پس از بودجهٔ محدود fail-soft می‌شود
+و retrieval واژگانی/trigram ادامه پیدا می‌کند؛ evidence gate همچنان fail-closed
+است. stream مدل پس از اولین delta به همان provider متعهد می‌شود و بدون buffer به
+کاربر می‌رسد؛ failover فقط قبل از اولین delta مجاز است تا پاسخ ترکیبی نشود.
 
 چهار متغیر `LLM_SMALL_INPUT_USD_PER_MILLION`،
 `LLM_SMALL_OUTPUT_USD_PER_MILLION`، `LLM_LARGE_INPUT_USD_PER_MILLION` و

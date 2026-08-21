@@ -72,6 +72,11 @@ LIARA_RUN_INGESTION=1 LIARA_EMBEDDING_BATCH_SIZE=8 \
 stop کانتینرها و شبکه را حذف می‌کند، ولی volumeهای PostgreSQL و Redis را نگه
 می‌دارد.
 
+در chat، اتصال provider حداکثر `PROVIDER_CONNECT_TIMEOUT_SECONDS` منتظر می‌ماند
+و query embedding حداکثر `QUERY_EMBEDDING_TIMEOUT_SECONDS` بودجه دارد. پس از آن
+lexical/trigram retrieval ادامه پیدا می‌کند و مدل پاسخ را به‌صورت delta واقعی
+stream می‌کند. این timeout تعاملی ingestion کامل corpus را محدود نمی‌کند.
+
 ## تست provider امن
 
 کلید را در command، history یا فایل tracked قرار ندهید. ابتدا کلید افشاشده را rotate کنید؛ سپس مقدار جدید را در Secret/Environment وارد کنید. smoke query باید source card با دامنهٔ `docs.liara.ir` داشته باشد؛ پاسخ فنی بدون source شکست محسوب می‌شود.

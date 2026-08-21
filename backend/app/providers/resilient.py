@@ -143,25 +143,6 @@ class ResilientProvider:
 
         return await self._with_bulkhead(run)
 
-    async def _collect_stream(
-        self,
-        target: ProviderTarget,
-        messages: Sequence[ProviderMessage],
-        *,
-        model: str,
-        max_output_tokens: int,
-        request_id: str,
-    ) -> list[StreamDelta]:
-        return [
-            delta
-            async for delta in target.provider.stream(
-                messages,
-                model=model,
-                max_output_tokens=max_output_tokens,
-                request_id=request_id,
-            )
-        ]
-
     async def stream(
         self,
         messages: Sequence[ProviderMessage],
@@ -170,27 +151,48 @@ class ResilientProvider:
         max_output_tokens: int,
         request_id: str,
     ) -> AsyncIterator[StreamDelta]:
-        async def run() -> tuple[list[StreamDelta], str]:
-            return await self._attempt(
-                lambda target: self._collect_stream(
-                    target,
-                    messages,
-                    model=model,
-                    max_output_tokens=max_output_tokens,
-                    request_id=request_id,
-                )
-            )
-
-        deltas, provider_name = await self._with_bulkhead(run)
-        for delta in deltas:
-            yield replace(
-                delta,
-                usage=(
-                    replace(delta.usage, provider_name=provider_name)
-                    if delta.usage is not None
-                    else None
-                ),
-            )
+        acquired = False
+        try:
+            async with asyncio.timeout(self._queue_timeout_seconds):
+                await self._bulkhead.acquire()
+                acquired = True
+            targets = self._available_targets()
+            if not targets:
+                raise ProviderFailure("provider_circuit_open", retryable=True)
+            last_error: ProviderFailure | None = None
+            for target in targets:
+                stream_started = False
+                try:
+                    async for delta in target.provider.stream(
+                        messages,
+                        model=model,
+                        max_output_tokens=max_output_tokens,
+                        request_id=request_id,
+                    ):
+                        stream_started = True
+                        self._success(target)
+                        yield replace(
+                            delta,
+                            usage=(
+                                replace(delta.usage, provider_name=target.name)
+                                if delta.usage is not None
+                                else None
+                            ),
+                        )
+                    self._success(target)
+                    return
+                except ProviderFailure as error:
+                    self._failure(target, error)
+                    last_error = error
+                    if stream_started or error.code not in FAILOVER_CODES:
+                        raise
+            assert last_error is not None
+            raise last_error
+        except TimeoutError as error:
+            raise ProviderFailure("provider_busy", retryable=True) from error
+        finally:
+            if acquired:
+                self._bulkhead.release()
 
     async def embed(
         self,

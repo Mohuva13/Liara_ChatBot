@@ -22,6 +22,7 @@ class OpenAICompatibleProvider:
         base_url: str,
         api_key: str,
         timeout_seconds: float,
+        connect_timeout_seconds: float | None = None,
         max_retries: int = 2,
         retry_base_seconds: float = 0.2,
         client: httpx.AsyncClient | None = None,
@@ -32,8 +33,9 @@ class OpenAICompatibleProvider:
         self._max_retries = max_retries
         self._retry_base_seconds = retry_base_seconds
         transport = httpx.AsyncHTTPTransport(retries=0)
+        connect_timeout = connect_timeout_seconds or timeout_seconds
         self._client = client or httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout_seconds),
+            timeout=httpx.Timeout(timeout_seconds, connect=connect_timeout),
             transport=transport,
         )
 

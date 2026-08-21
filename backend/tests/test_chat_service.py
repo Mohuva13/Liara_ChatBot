@@ -2,18 +2,24 @@ import json
 from collections.abc import AsyncIterator, Sequence
 
 import pytest
+from pydantic import SecretStr
 
 from app.core.config import Settings
 from app.models.chat import ChatStreamRequest
 from app.policies.rate_limit import RateLimitDecision
 from app.providers.base import (
     CompletionResult,
+    ProviderFailure,
     ProviderMessage,
     ProviderUsage,
     StreamDelta,
 )
 from app.retrieval.models import RetrievedChunk
-from app.services.chat import ChatOrchestrator, ChatPreparationError
+from app.services.chat import (
+    ChatOrchestrator,
+    ChatPreparationError,
+    build_chat_orchestrator,
+)
 from app.sessions.models import ReservationResult, SessionState, SessionTurn
 
 
@@ -79,9 +85,13 @@ class FakeRateLimiter:
 
 
 class FakeRetriever:
+    def __init__(self) -> None:
+        self.last_embedding: Sequence[float] | None | object = "unset"
+
     async def retrieve(
         self, query: str, embedding: Sequence[float] | None
     ) -> list[RetrievedChunk]:
+        self.last_embedding = embedding
         return [
             RetrievedChunk(
                 chunk_id="source-1",
@@ -163,6 +173,18 @@ class FakeProvider:
         )
 
 
+class FailingEmbeddingProvider(FakeProvider):
+    async def embed(
+        self,
+        inputs: Sequence[str],
+        *,
+        model: str,
+        dimensions: int | None,
+        request_id: str,
+    ) -> list[list[float]]:
+        raise ProviderFailure("provider_unavailable", retryable=True)
+
+
 def settings() -> Settings:
     return Settings(
         _env_file=None,
@@ -191,6 +213,22 @@ def payload(text: str) -> ChatStreamRequest:
         surface="page",
         locale="fa-IR",
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_reuses_provider_when_llm_and_embedding_credentials_match() -> None:
+    configured = settings().model_copy(
+        update={
+            "database_url": SecretStr("postgresql://database/db"),
+            "redis_url": SecretStr("redis://redis/0"),
+        }
+    )
+
+    orchestrator = build_chat_orchestrator(configured)
+
+    assert orchestrator is not None
+    assert orchestrator.llm_provider is orchestrator.embedding_provider
+    await orchestrator.aclose()
 
 
 def parse_events(chunks: list[bytes]) -> list[dict[str, object]]:
@@ -232,6 +270,28 @@ async def test_grounded_stream_emits_validated_sources_and_usage() -> None:
     assert events[-1]["outcome"] == "answered"
     assert store.finished is True
     assert store.state.turns[-1].source_ids == ["source-1"]
+
+
+@pytest.mark.asyncio
+async def test_query_embedding_failure_falls_back_to_lexical_retrieval() -> None:
+    retriever = FakeRetriever()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=FakeStore(),
+        rate_limiter=FakeRateLimiter(),
+        retriever=retriever,
+        llm_provider=FakeProvider(),
+        embedding_provider=FailingEmbeddingProvider(),
+    )
+    prepared = await orchestrator.prepare(
+        payload("آیا Pgvector لیارا از HNSW پشتیبانی می‌کند؟"),
+        request_id="request",
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    assert retriever.last_embedding is None
+    assert events[-1]["outcome"] == "answered"
 
 
 @pytest.mark.asyncio

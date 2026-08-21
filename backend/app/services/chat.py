@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -472,13 +473,31 @@ class ChatOrchestrator:
         self, prepared: PreparedChat
     ) -> tuple[list[RetrievedChunk], EvidenceDecision]:
         settings = self.settings
-        vectors = await self.embedding_provider.embed(
-            [prepared.payload.text],
-            model=self._required(settings.embedding_model),
-            dimensions=settings.embedding_dimensions,
-            request_id=prepared.request_id,
-        )
-        evidence = await self.retriever.retrieve(prepared.payload.text, vectors[0])
+        embedding: Sequence[float] | None = None
+        fallback_reason: str | None = None
+        try:
+            async with asyncio.timeout(settings.query_embedding_timeout_seconds):
+                vectors = await self.embedding_provider.embed(
+                    [prepared.payload.text],
+                    model=self._required(settings.embedding_model),
+                    dimensions=settings.embedding_dimensions,
+                    request_id=prepared.request_id,
+                )
+                embedding = vectors[0]
+        except TimeoutError:
+            fallback_reason = "timeout"
+        except ProviderFailure as error:
+            fallback_reason = error.code
+        if fallback_reason is not None:
+            telemetry_event(
+                "query_embedding_fallback",
+                request_id=prepared.request_id,
+                reason=fallback_reason,
+            )
+            metrics.increment(
+                "liara_query_embedding_fallback_total", reason=fallback_reason
+            )
+        evidence = await self.retriever.retrieve(prepared.payload.text, embedding)
         decision = assess_evidence(
             prepared.payload.text,
             evidence,
@@ -717,6 +736,34 @@ def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
     from app.services.sessions import RedisSessionStore
 
     store = RedisSessionStore(settings)
+    primary_credentials_shared = str(settings.llm_base_url).rstrip("/") == str(
+        settings.embedding_base_url
+    ).rstrip("/") and secrets.compare_digest(
+        settings.llm_api_key.get_secret_value(),
+        settings.embedding_api_key.get_secret_value(),
+    )
+    llm_backup_key = (
+        settings.llm_backup_api_key.get_secret_value()
+        if settings.llm_backup_api_key is not None
+        else None
+    )
+    embedding_backup_key = (
+        settings.embedding_backup_api_key.get_secret_value()
+        if settings.embedding_backup_api_key is not None
+        else None
+    )
+    backup_credentials_shared = (
+        llm_backup_key is None and embedding_backup_key is None
+    ) or (
+        llm_backup_key is not None
+        and embedding_backup_key is not None
+        and secrets.compare_digest(llm_backup_key, embedding_backup_key)
+        and str(settings.llm_backup_base_url or settings.llm_base_url).rstrip("/")
+        == str(
+            settings.embedding_backup_base_url or settings.embedding_base_url
+        ).rstrip("/")
+    )
+    share_provider = primary_credentials_shared and backup_credentials_shared
     llm_targets = [
         ProviderTarget(
             "primary",
@@ -724,6 +771,7 @@ def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
                 base_url=str(settings.llm_base_url),
                 api_key=settings.llm_api_key.get_secret_value(),
                 timeout_seconds=settings.llm_request_timeout_seconds,
+                connect_timeout_seconds=settings.provider_connect_timeout_seconds,
                 max_retries=settings.llm_max_retries,
             ),
         )
@@ -736,32 +784,7 @@ def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
                     base_url=str(settings.llm_backup_base_url or settings.llm_base_url),
                     api_key=settings.llm_backup_api_key.get_secret_value(),
                     timeout_seconds=settings.llm_request_timeout_seconds,
-                    max_retries=settings.llm_max_retries,
-                ),
-            )
-        )
-    embedding_targets = [
-        ProviderTarget(
-            "primary",
-            OpenAICompatibleProvider(
-                base_url=str(settings.embedding_base_url),
-                api_key=settings.embedding_api_key.get_secret_value(),
-                timeout_seconds=settings.llm_request_timeout_seconds,
-                max_retries=settings.llm_max_retries,
-            ),
-        )
-    ]
-    if settings.embedding_backup_api_key is not None:
-        embedding_targets.append(
-            ProviderTarget(
-                "backup",
-                OpenAICompatibleProvider(
-                    base_url=str(
-                        settings.embedding_backup_base_url
-                        or settings.embedding_base_url
-                    ),
-                    api_key=settings.embedding_backup_api_key.get_secret_value(),
-                    timeout_seconds=settings.llm_request_timeout_seconds,
+                    connect_timeout_seconds=settings.provider_connect_timeout_seconds,
                     max_retries=settings.llm_max_retries,
                 ),
             )
@@ -773,13 +796,46 @@ def build_chat_orchestrator(settings: Settings) -> ChatOrchestrator | None:
         concurrency_limit=settings.provider_concurrency_limit,
         queue_timeout_seconds=settings.provider_queue_timeout_seconds,
     )
-    embedding = ResilientProvider(
-        embedding_targets,
-        failure_threshold=settings.provider_circuit_failure_threshold,
-        reset_seconds=settings.provider_circuit_reset_seconds,
-        concurrency_limit=settings.provider_concurrency_limit,
-        queue_timeout_seconds=settings.provider_queue_timeout_seconds,
-    )
+    if share_provider:
+        embedding = llm
+    else:
+        embedding_targets = [
+            ProviderTarget(
+                "primary",
+                OpenAICompatibleProvider(
+                    base_url=str(settings.embedding_base_url),
+                    api_key=settings.embedding_api_key.get_secret_value(),
+                    timeout_seconds=settings.embedding_request_timeout_seconds,
+                    connect_timeout_seconds=settings.provider_connect_timeout_seconds,
+                    max_retries=settings.llm_max_retries,
+                ),
+            )
+        ]
+        if settings.embedding_backup_api_key is not None:
+            embedding_targets.append(
+                ProviderTarget(
+                    "backup",
+                    OpenAICompatibleProvider(
+                        base_url=str(
+                            settings.embedding_backup_base_url
+                            or settings.embedding_base_url
+                        ),
+                        api_key=settings.embedding_backup_api_key.get_secret_value(),
+                        timeout_seconds=settings.embedding_request_timeout_seconds,
+                        connect_timeout_seconds=(
+                            settings.provider_connect_timeout_seconds
+                        ),
+                        max_retries=settings.llm_max_retries,
+                    ),
+                )
+            )
+        embedding = ResilientProvider(
+            embedding_targets,
+            failure_threshold=settings.provider_circuit_failure_threshold,
+            reset_seconds=settings.provider_circuit_reset_seconds,
+            concurrency_limit=settings.provider_concurrency_limit,
+            queue_timeout_seconds=settings.provider_queue_timeout_seconds,
+        )
     return ChatOrchestrator(
         settings=settings,
         store=store,

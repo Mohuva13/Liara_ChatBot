@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 
 import pytest
@@ -63,6 +64,31 @@ class StubProvider:
     ) -> list[list[float]]:
         self._fail()
         return [[0.1] for _ in inputs]
+
+
+class GatedStreamProvider(StubProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_delta_created = asyncio.Event()
+        self.release_stream = asyncio.Event()
+
+    async def stream(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        model: str,
+        max_output_tokens: int,
+        request_id: str,
+    ) -> AsyncIterator[StreamDelta]:
+        self.calls += 1
+        self.first_delta_created.set()
+        yield StreamDelta(text="first")
+        await self.release_stream.wait()
+        yield StreamDelta(
+            text="second",
+            finish_reason="stop",
+            usage=ProviderUsage(input_tokens=2, output_tokens=2),
+        )
 
 
 def resilient(primary: StubProvider, backup: StubProvider) -> ResilientProvider:
@@ -145,3 +171,32 @@ async def test_stream_failover_never_emits_partial_primary_output() -> None:
     assert "".join(delta.text for delta in deltas) == "safe"
     assert deltas[-1].usage is not None
     assert deltas[-1].usage.provider_name == "backup"
+
+
+@pytest.mark.asyncio
+async def test_stream_forwards_first_delta_without_buffering_completion() -> None:
+    target = GatedStreamProvider()
+    provider = ResilientProvider(
+        [ProviderTarget("primary", target)],
+        failure_threshold=1,
+        reset_seconds=60,
+        concurrency_limit=2,
+        queue_timeout_seconds=1,
+    )
+    stream = provider.stream(
+        [ProviderMessage(role="user", content="test")],
+        model="model",
+        max_output_tokens=10,
+        request_id="request",
+    )
+
+    first_task = asyncio.create_task(anext(stream))
+    await target.first_delta_created.wait()
+    first = await asyncio.wait_for(first_task, timeout=0.1)
+
+    assert first.text == "first"
+    target.release_stream.set()
+    remaining = [delta async for delta in stream]
+    assert remaining[-1].text == "second"
+    assert remaining[-1].usage is not None
+    assert remaining[-1].usage.provider_name == "primary"

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     llm_large_model: str | None = None
     llm_request_timeout_seconds: float = Field(default=60, gt=0, le=300)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    provider_connect_timeout_seconds: float = Field(default=10, gt=0, le=60)
     provider_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     provider_circuit_reset_seconds: float = Field(default=30, ge=1, le=600)
     provider_concurrency_limit: int = Field(default=8, ge=1, le=100)
@@ -55,6 +56,7 @@ class Settings(BaseSettings):
     embedding_dimensions: int | None = Field(default=None, gt=0)
     embedding_batch_size: int = Field(default=16, ge=1, le=256)
     embedding_request_timeout_seconds: float = Field(default=120, gt=0, le=600)
+    query_embedding_timeout_seconds: float = Field(default=8, gt=0, le=60)
 
     max_user_input_chars: int = Field(default=4000, ge=100, le=20000)
     max_request_bytes: int = Field(default=65536, ge=1024, le=1048576)
