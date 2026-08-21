@@ -56,7 +56,7 @@ class RequestBodyLimitMiddleware:
         async def replay_receive() -> Message:
             nonlocal delivered
             if delivered:
-                return {"type": "http.disconnect"}
+                return await receive()
             delivered = True
             return {"type": "http.request", "body": b"".join(chunks)}
 

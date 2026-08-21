@@ -30,13 +30,6 @@ import {
   Suggestions,
 } from "@/components/ai-elements/suggestion";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useLiaraChat } from "@/features/chat/chat-provider";
 import { SourceCards } from "@/features/chat/components/source-cards";
 import { SupportCard } from "@/features/chat/components/support-card";
@@ -179,11 +172,9 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
   const {
     clearError,
     error,
-    knowledgeLevel,
     messages,
     regenerate,
     sendMessage,
-    setKnowledgeLevel,
     setMessages,
     status,
     stop,
@@ -212,7 +203,7 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
     clearError();
     await sendMessage(
       { text: normalized },
-      { body: { surface, knowledgeLevel } },
+      { body: { surface } },
     );
   };
 
@@ -248,31 +239,6 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Select
-            onValueChange={(value) => {
-              if (
-                value === "beginner" ||
-                value === "intermediate" ||
-                value === "advanced"
-              ) {
-                setKnowledgeLevel(value);
-              }
-            }}
-            value={knowledgeLevel}
-          >
-            <SelectTrigger
-              aria-label="سطح جزئیات پاسخ"
-              className="max-w-24 sm:max-w-none"
-              size="sm"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="beginner">ساده</SelectItem>
-              <SelectItem value="intermediate">متعادل</SelectItem>
-              <SelectItem value="advanced">فنی</SelectItem>
-            </SelectContent>
-          </Select>
           <Button
             aria-label="شروع گفت‌وگوی جدید"
             onClick={() => void resetSession()}
@@ -324,9 +290,7 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
               </p>
               <Button
                 className="mt-3"
-                onClick={() =>
-                  void regenerate({ body: { surface, knowledgeLevel } })
-                }
+                onClick={() => void regenerate({ body: { surface } })}
                 size="sm"
                 type="button"
                 variant="outline"

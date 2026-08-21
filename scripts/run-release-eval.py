@@ -46,7 +46,6 @@ async def evaluate(client: httpx.AsyncClient, row: dict[str, Any]) -> dict[str, 
             "text": row["query"],
             "surface": "page",
             "locale": "fa-IR",
-            "knowledge_level": "intermediate",
         },
     )
     latency_ms = round((time.perf_counter() - started) * 1000, 2)

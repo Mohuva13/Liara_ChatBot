@@ -16,8 +16,7 @@ class IssueState(BaseModel):
 
 
 class SessionState(BaseModel):
-    schema_version: int = 1
-    knowledge_level: Literal["beginner", "intermediate", "advanced"] = "intermediate"
+    schema_version: int = 2
     summary: str = Field(default="", max_length=4000)
     turns: list[SessionTurn] = Field(default_factory=list)
     issue: IssueState = Field(default_factory=IssueState)

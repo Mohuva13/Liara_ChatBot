@@ -1,6 +1,5 @@
 import json
 from collections.abc import AsyncIterator, Sequence
-from typing import Literal
 
 import pytest
 
@@ -53,14 +52,6 @@ class FakeStore:
         else:
             self.state.issue.key = issue_key
             self.state.issue.failure_count = 1
-        return self.state
-
-    async def set_knowledge_level(
-        self,
-        session_id: str,
-        knowledge_level: Literal["beginner", "intermediate", "advanced"],
-    ) -> SessionState:
-        self.state.knowledge_level = knowledge_level
         return self.state
 
 
@@ -313,25 +304,6 @@ async def test_repeated_failure_stays_attached_to_original_issue() -> None:
         payload("هنوز مشکل دارم و حل نشد"), request_id="request-2"
     )
     assert await orchestrator._failure_count(second) == 2
-
-
-@pytest.mark.asyncio
-async def test_explicit_knowledge_level_is_saved_in_session() -> None:
-    store = FakeStore()
-    request = payload("آیا Pgvector لیارا از HNSW پشتیبانی می‌کند؟")
-    request.knowledge_level = "advanced"
-    orchestrator = ChatOrchestrator(
-        settings=settings(),
-        store=store,
-        rate_limiter=FakeRateLimiter(),
-        retriever=FakeRetriever(),
-        llm_provider=FakeProvider(),
-        embedding_provider=FakeProvider(),
-    )
-
-    prepared = await orchestrator.prepare(request, request_id="request")
-
-    assert prepared.state.knowledge_level == "advanced"
 
 
 @pytest.mark.asyncio

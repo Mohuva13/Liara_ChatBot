@@ -5,7 +5,7 @@
 ```text
 id, turns, expected_intent, expected_docs, forbidden_docs,
 answerable, required_facts, forbidden_claims, expected_outcome,
-knowledge_level, tags
+audience_cues, tags
 ```
 
 پوشش اجباری dataset:

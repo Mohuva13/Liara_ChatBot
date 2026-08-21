@@ -23,7 +23,7 @@ Discovery اجباری دو مخزن مرجع انجام و در [`docs/discover
 - ingestion واقعی `public/llms/**/*.md`: canonical metadata، redaction، chunking آگاه از code fence، embedding batch و فعال‌سازی atomic نسخه در Pgvector
 - hybrid lexical/trigram + exact-vector retrieval، RRF/rerank، evidence gate و citation فقط از metadata دامنه `docs.liara.ir`
 - adapter OpenAI-compatible با primary/backup key، circuit breaker، bulkhead، timeout، jitter retry و model routing
-- cache پاسخ grounded، token budget، cost estimate و انتخاب سطح پاسخ ساده/متعادل/فنی
+- cache پاسخ grounded، token budget، cost estimate و تطبیق خودکار عمق پاسخ با context کاربر
 - liveness/readiness، private-hop auth، rate limit، CSP، Prometheus metrics و OTLP tracing بدون متن prompt/user
 - Docker/Liara config، Compose محلی، runbook، threat model، secret scan و eval dataset versioned
 

@@ -13,7 +13,6 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 type ClientChatBody = {
   messages?: unknown;
   surface?: unknown;
-  knowledgeLevel?: unknown;
 };
 
 type SessionPayload = {
@@ -168,11 +167,6 @@ export async function POST(request: Request) {
         text,
         surface: body.surface === "popup" ? "popup" : "page",
         locale: "fa-IR",
-        knowledge_level:
-          body.knowledgeLevel === "beginner" ||
-          body.knowledgeLevel === "advanced"
-            ? body.knowledgeLevel
-            : "intermediate",
       }),
       cache: "no-store",
       signal: request.signal,

@@ -600,6 +600,9 @@ product, platform, framework, database, version, error_code,
 command, desired_outcome, current_step, knowledge_level
 ```
 
+`knowledge_level` یک سیگنال استنباط‌شده از متن و recent turns است، نه control یا
+profile دائمی سمت browser.
+
 ### 10.2 Clarification policy
 
 سؤال تکمیلی فقط اگر پاسخ آن یکی از این‌ها را عوض کند:
@@ -626,6 +629,8 @@ User مدل را انتخاب نمی‌کند. routing reason و tier در telem
 
 ### 10.4 سطح دانش
 
+- سطح توسط مدل از سؤال و context محدود همان session استنباط می‌شود؛ selector دستی
+  یا model picker در UI نمایش داده نمی‌شود.
 - Beginner: اصطلاح کوتاه توضیح داده شود، مراحل شماره‌دار، command + محل اجرا + نتیجه‌ی موردانتظار.
 - Intermediate: توضیح فشرده، command و caveat اصلی.
 - Advanced: جزئیات config/edge case، حداقل توضیح بدیهیات.

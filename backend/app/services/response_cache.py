@@ -9,7 +9,7 @@ from app.core.config import Settings
 from app.core.logging import telemetry_event
 from app.retrieval.normalizer import normalize_persian
 
-POLICY_VERSION = "grounding-v1"
+POLICY_VERSION = "grounding-v2-adaptive-audience"
 
 
 def response_cache_key(
@@ -18,7 +18,6 @@ def response_cache_key(
     intent: str,
     corpus_versions: Sequence[str],
     locale: str,
-    knowledge_level: str,
 ) -> str:
     payload = json.dumps(
         {
@@ -26,7 +25,6 @@ def response_cache_key(
             "intent": intent,
             "corpus_versions": sorted(set(corpus_versions)),
             "locale": locale,
-            "knowledge_level": knowledge_level,
             "policy": POLICY_VERSION,
         },
         ensure_ascii=False,

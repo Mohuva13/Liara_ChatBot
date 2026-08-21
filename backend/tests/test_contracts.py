@@ -1,8 +1,13 @@
+import asyncio
+from collections.abc import AsyncIterator
+
 import httpx2
 import pytest
 
 from app.core.config import Settings
 from app.main import create_app
+from app.models.events import ChatEvent
+from app.models.health import ComponentStatus, ReadyResponse
 
 VALID_CHAT_REQUEST = {
     "protocol_version": "1",
@@ -20,6 +25,39 @@ class LocalSessionStore:
 
     async def delete(self, session_id: str) -> bool:
         return True
+
+
+class AlwaysReadyProbe:
+    async def check(self) -> ReadyResponse:
+        component = ComponentStatus(ready=True, code="ok")
+        return ReadyResponse(
+            ready=True,
+            components={
+                "postgres": component,
+                "corpus": component,
+                "redis": component,
+                "provider": component,
+            },
+        )
+
+
+class StreamingOrchestrator:
+    async def prepare(
+        self, payload: object, *, request_id: str, rate_identity: str | None = None
+    ) -> object:
+        return object()
+
+    async def stream(self, prepared: object) -> AsyncIterator[bytes]:
+        yield ChatEvent(type="message_start", response_id="response-id").to_sse()
+        await asyncio.sleep(0.01)
+        yield ChatEvent(type="status", text="در حال آزمایش stream…").to_sse()
+        await asyncio.sleep(0.01)
+        yield ChatEvent(
+            type="message_end", finish_reason="stop", outcome="answered"
+        ).to_sse()
+
+    async def aclose(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -118,6 +156,29 @@ async def test_request_body_limit_rejects_before_parsing(
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "request_too_large"
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_request_body_limit_does_not_cancel_streaming_response() -> None:
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            app_env="test",
+            max_request_bytes=1024,
+        ),
+        readiness_probe=AlwaysReadyProbe(),  # type: ignore[arg-type]
+        session_store=LocalSessionStore(),
+        chat_orchestrator=StreamingOrchestrator(),  # type: ignore[arg-type]
+    )
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post("/v1/chat/stream", json=VALID_CHAT_REQUEST)
+
+    assert response.status_code == 200
+    assert '"type":"message_start"' in response.text
+    assert '"type":"message_end"' in response.text
 
 
 @pytest.mark.asyncio

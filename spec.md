@@ -37,7 +37,7 @@
 - scope/intent detection و سؤال تکمیلی
 - پاسخ grounded با citation و source cards
 - session memory و follow-up
-- سطح پاسخ beginner/intermediate/advanced در همان session
+- تطبیق خودکار عمق پاسخ با شواهد همان session و درخواست زبانی کاربر
 - فرآیندهای چندمرحله‌ای و next-step suggestions
 - repeated-failure detection و Ticket escalation
 - مدل API-based با small/large routing
@@ -249,9 +249,13 @@ recent turns + summary server-generated استفاده شود. summary فقط fa
 
 #### CONV-004 — سطح دانش
 
-سیستم سطح `beginner/intermediate/advanced` را از انتخاب صریح یا شواهد همان session نگه می‌دارد. کاربر می‌تواند آن را تغییر دهد.
+مدل سطح `beginner/intermediate/advanced` را از شواهد همان session و شیوهٔ بیان
+پرسش استنباط می‌کند. selector دستی در UI وجود ندارد؛ کاربر می‌تواند با زبان طبیعی
+درخواست کند پاسخ ساده‌تر، کوتاه‌تر یا فنی‌تر شود و این درخواست فقط در همان session
+به‌عنوان شاهد استفاده می‌شود.
 
-**پذیرش:** یک سؤال ثابت در سه سطح، جزئیات و توضیح متفاوت ولی facts/citations یکسان تولید کند.
+**پذیرش:** یک سؤال ثابت با سه context دارای نشانه‌های سطح متفاوت، جزئیات و توضیح
+متفاوت ولی facts/citations یکسان تولید کند.
 
 #### CONV-005 — فرآیند چندمرحله‌ای
 
@@ -454,7 +458,7 @@ Liara health check به readiness مناسب متصل شود؛ استقرار ج
 
 ### Session (Redis)
 
-`session_id`, `created_at`, `last_seen_at`, `knowledge_level`, recent turns, factual summary, active issue, failure count, token budget state
+`session_id`, `created_at`, `last_seen_at`, recent turns, factual summary, active issue, failure count, token budget state
 
 ### Turn
 

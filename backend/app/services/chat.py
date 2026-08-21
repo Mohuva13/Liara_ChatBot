@@ -4,7 +4,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast
+from typing import Protocol, cast
 from urllib.parse import urlparse
 
 from app.core.config import Settings
@@ -62,12 +62,6 @@ class ConversationStore(Protocol):
 
     async def record_issue_failure(
         self, session_id: str, issue_key: str
-    ) -> SessionState: ...
-
-    async def set_knowledge_level(
-        self,
-        session_id: str,
-        knowledge_level: Literal["beginner", "intermediate", "advanced"],
     ) -> SessionState: ...
 
 
@@ -152,13 +146,6 @@ class ChatOrchestrator:
                 status_code=404,
                 code="session_not_found",
                 message="نشست گفتگو پیدا نشد یا منقضی شده است.",
-            )
-        if (
-            payload.knowledge_level is not None
-            and payload.knowledge_level != state.knowledge_level
-        ):
-            state = await self.store.set_knowledge_level(
-                payload.session_id, payload.knowledge_level
             )
         try:
             rate = await self.rate_limiter.check(
@@ -262,7 +249,6 @@ class ChatOrchestrator:
                 payload.text,
                 decision.chunks,
                 intent=prepared.scope.intent,
-                knowledge_level=prepared.state.knowledge_level,
                 summary=prepared.state.summary,
                 recent_turns=prepared.state.turns,
                 max_context_tokens=self.settings.max_context_tokens,
@@ -287,7 +273,6 @@ class ChatOrchestrator:
                     intent=prepared.scope.intent.value,
                     corpus_versions=[chunk.corpus_version for chunk in decision.chunks],
                     locale=payload.locale,
-                    knowledge_level=prepared.state.knowledge_level,
                 )
                 assert self.response_cache is not None
                 cached = await self.response_cache.get(cache_key)
