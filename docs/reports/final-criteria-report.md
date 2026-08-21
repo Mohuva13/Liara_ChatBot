@@ -27,6 +27,9 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
 - هر claim مدل باید source ID معتبر داشته باشد؛ JSON schema و URL/source allowlist
   پس از generation validate می‌شوند. پاسخ مدل که کمبود evidence را داخل یک پاسخ
   ظاهراً معتبر پنهان کند نیز رد می‌شود و source نامرتبط نمایش داده نمی‌شود.
+- اگر generation یا repair نامعتبر/موقتاً unavailable باشد، fallback استخراجی فقط
+  برای گزاره منفی صریحی فعال می‌شود که همه entityهای نام‌برده‌شده را در همان سند
+  رسمی پوشش دهد؛ در غیر این صورت سیستم همچنان fail-closed می‌ماند.
 - سؤال کم‌اطلاعات حداکثر یک clarification می‌گیرد؛ تلاش ناموفق بعدی و سؤال مشخصِ
   بدون شاهد مستقیماً Support می‌شوند. پاسخ کوتاه کاربر به clarification با موضوع
   اصلی ترکیب می‌شود، Support برای همان موضوع terminal است، و دو failure صریح همان
@@ -117,7 +120,7 @@ eval و استقرار واقعی، خوداظهاری ۳۰۰/۳۰۰ معتبر 
 
 گیت محلی شامل Ruff، format check، Mypy strict، Pytest، ESLint، TypeScript، Vitest،
 Next production build، secret scan، corpus inventory و dataset validation است.
-در آخرین اجرای ثبت‌شده: ۷۸ تست backend و ۶ تست frontend پاس شدند، scope accuracy
+در آخرین اجرای ثبت‌شده: ۷۹ تست backend و ۲۰ تست frontend پاس شدند، scope accuracy
 روی ۸ case برابر ۱٫۰ بود، build تولیدی موفق شد، secret scan پاک بود و audit
 وابستگی‌های production در npm و PyPI آسیب‌پذیری شناخته‌شده‌ای گزارش نکرد. QA
 مرورگر production در عرض ۳۲۰ و ۱۴۴۰ بدون overflow بود و Escape/focus-return

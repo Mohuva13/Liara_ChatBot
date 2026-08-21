@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from app.core.config import Settings
 from app.core.logging import telemetry_event
 from app.core.metrics import metrics
+from app.generation.extractive import extractive_grounded_fallback
 from app.generation.models import ValidatedAnswer
 from app.generation.prompt import build_grounded_messages
 from app.generation.router import select_model_route
@@ -339,46 +340,22 @@ class ChatOrchestrator:
                         yield event
                     completed = True
                     return
-                raw, usage, finish_reason = await self._generate_validated_raw(
+                answer, raw, usage, finish_reason = await self._generate_answer(
                     messages,
+                    query=payload.text,
+                    evidence=decision.chunks,
                     model=route.model,
                     max_tokens=route.max_output_tokens,
                     request_id=prepared.request_id,
                 )
-                try:
-                    answer = validate_grounded_answer(raw, decision.chunks)
-                except ModelAbstainedError:
+                if answer is None:
                     async for event in self._grounding_fallback(
                         prepared, evidence=evidence
                     ):
                         yield event
                     completed = True
                     return
-                except GroundingValidationError:
-                    repair = await self._repair(
-                        messages,
-                        model=route.model,
-                        max_tokens=route.max_output_tokens,
-                        request_id=prepared.request_id,
-                    )
-                    raw = repair.text
-                    try:
-                        answer = validate_grounded_answer(raw, decision.chunks)
-                    except ModelAbstainedError:
-                        async for event in self._grounding_fallback(
-                            prepared, evidence=evidence
-                        ):
-                            yield event
-                        completed = True
-                        return
-                    usage = ProviderUsage(
-                        input_tokens=usage.input_tokens + repair.usage.input_tokens,
-                        output_tokens=usage.output_tokens + repair.usage.output_tokens,
-                        cached_tokens=usage.cached_tokens + repair.usage.cached_tokens,
-                        provider_name=repair.usage.provider_name or usage.provider_name,
-                    )
-                    finish_reason = repair.finish_reason
-                if cache_key is not None and self.response_cache is not None:
+                if raw and cache_key is not None and self.response_cache is not None:
                     await self.response_cache.set(
                         cache_key,
                         raw,
@@ -476,7 +453,14 @@ class ChatOrchestrator:
                 ],
             )
             completed = True
-        except GroundingValidationError:
+        except GroundingValidationError as error:
+            telemetry_event(
+                "chat_failed",
+                request_id=prepared.request_id,
+                response_id=prepared.response_id,
+                error_code="grounding_failed",
+                error_type=type(error).__name__,
+            )
             yield ChatEvent(
                 type="error",
                 code="grounding_failed",
@@ -484,6 +468,13 @@ class ChatOrchestrator:
                 retryable=False,
             ).to_sse()
         except ProviderFailure as error:
+            telemetry_event(
+                "chat_failed",
+                request_id=prepared.request_id,
+                response_id=prepared.response_id,
+                error_code=error.code,
+                error_type=type(error).__name__,
+            )
             metrics.increment(
                 "liara_chat_outcomes_total",
                 outcome=error.code,
@@ -499,7 +490,14 @@ class ChatOrchestrator:
             ).to_sse()
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            telemetry_event(
+                "chat_failed",
+                request_id=prepared.request_id,
+                response_id=prepared.response_id,
+                error_code="generation_failed",
+                error_type=type(error).__name__,
+            )
             yield ChatEvent(
                 type="error",
                 code="generation_failed",
@@ -685,6 +683,64 @@ class ChatOrchestrator:
             if delta.finish_reason is not None:
                 finish_reason = delta.finish_reason
         return "".join(parts), usage, finish_reason
+
+    async def _generate_answer(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        query: str,
+        evidence: Sequence[RetrievedChunk],
+        model: str,
+        max_tokens: int,
+        request_id: str,
+    ) -> tuple[ValidatedAnswer | None, str, ProviderUsage, str]:
+        fallback = extractive_grounded_fallback(query, evidence)
+        usage = ProviderUsage()
+        raw = ""
+        finish_reason = "unknown"
+        try:
+            raw, usage, finish_reason = await self._generate_validated_raw(
+                messages,
+                model=model,
+                max_tokens=max_tokens,
+                request_id=request_id,
+            )
+        except ProviderFailure:
+            if fallback is None:
+                raise
+            return fallback, "", usage, "extractive_fallback"
+        try:
+            return (
+                validate_grounded_answer(raw, evidence),
+                raw,
+                usage,
+                finish_reason,
+            )
+        except ModelAbstainedError:
+            return fallback, "", usage, "extractive_fallback"
+        except GroundingValidationError:
+            try:
+                repair = await self._repair(
+                    messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    request_id=request_id,
+                )
+            except ProviderFailure:
+                if fallback is None:
+                    raise
+                return fallback, "", usage, "extractive_fallback"
+            repaired_usage = ProviderUsage(
+                input_tokens=usage.input_tokens + repair.usage.input_tokens,
+                output_tokens=usage.output_tokens + repair.usage.output_tokens,
+                cached_tokens=usage.cached_tokens + repair.usage.cached_tokens,
+                provider_name=repair.usage.provider_name or usage.provider_name,
+            )
+            try:
+                answer = validate_grounded_answer(repair.text, evidence)
+            except GroundingValidationError:
+                return fallback, "", repaired_usage, "extractive_fallback"
+            return answer, repair.text, repaired_usage, repair.finish_reason
 
     async def _repair(
         self,

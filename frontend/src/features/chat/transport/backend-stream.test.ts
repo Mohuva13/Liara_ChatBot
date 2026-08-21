@@ -105,4 +105,25 @@ describe("backend SSE to AI SDK UI stream", () => {
       },
     });
   });
+
+  it("preserves the safe backend error message", async () => {
+    const payload = [
+      backendEvent({ type: "message_start", response_id: "response-3" }),
+      backendEvent({
+        type: "error",
+        code: "provider_timeout",
+        message: "سرویس تولید پاسخ موقتاً در دسترس نیست.",
+        retryable: true,
+      }),
+    ].join("");
+
+    const chunks = await readUIChunks(
+      mapBackendStream(sourceFromPieces([payload])),
+    );
+
+    expect(chunks).toContainEqual({
+      type: "error",
+      errorText: "سرویس تولید پاسخ موقتاً در دسترس نیست.",
+    });
+  });
 });

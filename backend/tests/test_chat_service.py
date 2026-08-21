@@ -219,6 +219,39 @@ class AbstainingProvider(FakeProvider):
         )
 
 
+class InvalidGenerationProvider(FakeProvider):
+    async def complete(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        model: str,
+        max_output_tokens: int,
+        request_id: str,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        return CompletionResult(
+            text="not-json",
+            finish_reason="stop",
+            usage=ProviderUsage(input_tokens=4, output_tokens=2),
+        )
+
+    async def stream(
+        self,
+        messages: Sequence[ProviderMessage],
+        *,
+        model: str,
+        max_output_tokens: int,
+        request_id: str,
+    ) -> AsyncIterator[StreamDelta]:
+        self.called = True
+        self.stream_called = True
+        yield StreamDelta(text="not-json")
+        yield StreamDelta(
+            finish_reason="stop",
+            usage=ProviderUsage(input_tokens=4, output_tokens=2),
+        )
+
+
 def settings() -> Settings:
     return Settings(
         _env_file=None,
@@ -590,7 +623,7 @@ async def test_unrecognized_out_of_scope_query_never_calls_answer_model() -> Non
 
 
 @pytest.mark.asyncio
-async def test_model_abstention_is_not_shown_as_grounded_answer() -> None:
+async def test_model_abstention_uses_safe_extractive_fact() -> None:
     store = FakeStore()
     provider = AbstainingProvider()
     orchestrator = ChatOrchestrator(
@@ -608,8 +641,40 @@ async def test_model_abstention_is_not_shown_as_grounded_answer() -> None:
 
     events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
 
-    assert not any(event["type"] == "sources" for event in events)
-    assert events[-1]["outcome"] == "support"
+    answer_text = "".join(
+        str(event.get("text", "")) for event in events if event["type"] == "text_delta"
+    )
+    assert "HNSW" in answer_text
+    assert any(event["type"] == "sources" for event in events)
+    assert events[-1]["outcome"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_invalid_provider_json_uses_safe_extractive_fact() -> None:
+    store = FakeStore()
+    provider = InvalidGenerationProvider()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=provider,
+        embedding_provider=provider,
+    )
+    prepared = await orchestrator.prepare(
+        payload("Pgvector در PostgreSQL لیارا چه محدودیتی دارد؟"),
+        request_id="request",
+    )
+
+    events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
+
+    answer_text = "".join(
+        str(event.get("text", "")) for event in events if event["type"] == "text_delta"
+    )
+    assert "HNSW" in answer_text
+    assert any(event["type"] == "sources" for event in events)
+    assert not any(event["type"] == "error" for event in events)
+    assert events[-1]["outcome"] == "answered"
 
 
 @pytest.mark.asyncio

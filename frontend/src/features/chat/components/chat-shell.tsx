@@ -226,6 +226,10 @@ export function ChatShell({
       : status === "streaming"
         ? "در حال دریافت پاسخ مستند…"
         : "آماده دریافت پرسش";
+  const publicErrorMessage =
+    error instanceof Error && error.message.trim()
+      ? error.message
+      : "سرویس پاسخ‌گویی موقتاً در دسترس نیست.";
 
   return (
     <section
@@ -312,8 +316,7 @@ export function ChatShell({
             >
               <p className="font-medium">پاسخ دریافت نشد.</p>
               <p className="mt-1 text-muted-foreground">
-                متن پرسش حفظ شده است. می‌توانید پس از آماده‌شدن سرویس دوباره تلاش
-                کنید.
+                {publicErrorMessage} متن پرسش حفظ شده است.
               </p>
               <Button
                 className="mt-3"
