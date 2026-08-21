@@ -53,6 +53,15 @@ liveness، readiness و صفحهٔ Chat پیام آماده بودن می‌ده
 LIARA_RUN_INGESTION=1 ./scripts/start-local.sh
 ```
 
+برای provider کند یا ناپایدار، start محلی به‌صورت پیش‌فرض batch برابر `16` و
+timeout برابر `120` ثانیه را فقط به پردازش ingestion تزریق می‌کند. این دو مقدار
+بدون ویرایش secretها قابل تنظیم‌اند:
+
+```bash
+LIARA_RUN_INGESTION=1 LIARA_EMBEDDING_BATCH_SIZE=8 \
+  LIARA_EMBEDDING_TIMEOUT_SECONDS=180 ./scripts/start-local.sh
+```
+
 برای افزایش مهلت انتظار، `LIARA_START_TIMEOUT_SECONDS` را تنظیم کنید. اسکریپت
 stop کانتینرها و شبکه را حذف می‌کند، ولی volumeهای PostgreSQL و Redis را نگه
 می‌دارد.

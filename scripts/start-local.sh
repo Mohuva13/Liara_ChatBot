@@ -56,7 +56,10 @@ wait_for_url "http://localhost:8000/health/live" "FastAPI زنده است"
 
 if [[ "${LIARA_RUN_INGESTION:-0}" == "1" ]]; then
   echo "اجرای ingestion افزایشی و فعال‌سازی corpus..."
-  docker compose exec -T backend python -m app.ingestion.cli --activate
+  docker compose exec -T \
+    -e EMBEDDING_BATCH_SIZE="${LIARA_EMBEDDING_BATCH_SIZE:-16}" \
+    -e EMBEDDING_REQUEST_TIMEOUT_SECONDS="${LIARA_EMBEDDING_TIMEOUT_SECONDS:-120}" \
+    backend python -m app.ingestion.cli --activate
 fi
 
 wait_for_url "http://localhost:8000/health/ready" "FastAPI آماده است"

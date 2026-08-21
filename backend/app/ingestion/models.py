@@ -53,7 +53,7 @@ class IngestionConfig:
     max_tokens: int = 650
     min_tokens: int = 120
     overlap_tokens: int = 70
-    embedding_batch_size: int = 64
+    embedding_batch_size: int = 16
 
 
 @dataclass(slots=True)

@@ -76,6 +76,8 @@ Internet -> Next.js frontend -> private HTTP -> FastAPI backend
 | `EMBEDDING_BACKUP_API_KEY` | Secret embedding backup |
 | `EMBEDDING_MODEL` | model تأییدشده |
 | `EMBEDDING_DIMENSIONS` | dimension واقعی پاسخ provider و migration |
+| `EMBEDDING_BATCH_SIZE` | baseline برابر `16`؛ افزایش فقط پس از benchmark provider |
+| `EMBEDDING_REQUEST_TIMEOUT_SECONDS` | timeout مستقل embedding؛ baseline برابر `120` |
 | `METRICS_BEARER_TOKEN` | Secret مستقل برای scrape کردن `/metrics` |
 
 ### Backend — policy/cost tuning

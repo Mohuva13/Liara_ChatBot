@@ -109,7 +109,7 @@ async def run() -> None:
             OpenAICompatibleProvider(
                 base_url=str(settings.embedding_base_url),
                 api_key=settings.embedding_api_key.get_secret_value(),
-                timeout_seconds=settings.llm_request_timeout_seconds,
+                timeout_seconds=settings.embedding_request_timeout_seconds,
                 max_retries=settings.llm_max_retries,
             ),
         )
@@ -124,7 +124,7 @@ async def run() -> None:
                         or settings.embedding_base_url
                     ),
                     api_key=settings.embedding_backup_api_key.get_secret_value(),
-                    timeout_seconds=settings.llm_request_timeout_seconds,
+                    timeout_seconds=settings.embedding_request_timeout_seconds,
                     max_retries=settings.llm_max_retries,
                 ),
             )

@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     embedding_backup_api_key: SecretStr | None = None
     embedding_model: str | None = None
     embedding_dimensions: int | None = Field(default=None, gt=0)
-    embedding_batch_size: int = Field(default=64, ge=1, le=256)
+    embedding_batch_size: int = Field(default=16, ge=1, le=256)
+    embedding_request_timeout_seconds: float = Field(default=120, gt=0, le=600)
 
     max_user_input_chars: int = Field(default=4000, ge=100, le=20000)
     max_request_bytes: int = Field(default=65536, ge=1024, le=1048576)
