@@ -526,6 +526,28 @@ async def test_new_liara_topic_after_support_does_not_inherit_old_service() -> N
 
 
 @pytest.mark.asyncio
+async def test_specific_entity_after_support_can_retry_retrieval() -> None:
+    store = FakeStore()
+    store.state.turns = [
+        SessionTurn(role="user", text="محدودیت PostgreSQL چیست؟"),
+        SessionTurn(role="assistant", text="خلاصه تیکت", outcome="support"),
+    ]
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=FakeRetriever(),
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+    prepared = await orchestrator.prepare(
+        payload("Pgvector چه محدودیتی دارد؟"), request_id="request"
+    )
+
+    assert orchestrator._follows_terminal_support(prepared) is False
+
+
+@pytest.mark.asyncio
 async def test_out_of_scope_is_deterministic_and_skips_provider() -> None:
     provider = FakeProvider()
     orchestrator = ChatOrchestrator(
@@ -587,7 +609,7 @@ async def test_model_abstention_is_not_shown_as_grounded_answer() -> None:
     events = parse_events([chunk async for chunk in orchestrator.stream(prepared)])
 
     assert not any(event["type"] == "sources" for event in events)
-    assert events[-1]["outcome"] == "clarification"
+    assert events[-1]["outcome"] == "support"
 
 
 @pytest.mark.asyncio

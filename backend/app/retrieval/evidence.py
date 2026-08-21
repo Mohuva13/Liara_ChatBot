@@ -1,25 +1,14 @@
 from collections.abc import Sequence
 
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
-from app.retrieval.normalizer import normalize_persian, retrieval_terms
+from app.retrieval.normalizer import (
+    RETRIEVAL_ENTITY_TERMS,
+    normalize_persian,
+    retrieval_terms,
+)
 
 NEGATIVE_MARKERS = ("پشتیبانی نمی کند", "امکان ندارد", "مجاز نیست")
 POSITIVE_MARKERS = ("پشتیبانی می کند", "امکان دارد", "مجاز است")
-REQUIRED_ENTITY_TERMS = {
-    "django",
-    "docker",
-    "kubernetes",
-    "laravel",
-    "mongodb",
-    "mssql",
-    "mysql",
-    "nextjs",
-    "nodejs",
-    "php",
-    "postgresql",
-    "python",
-    "redis",
-}
 
 
 def meaningful_terms(value: str) -> set[str]:
@@ -77,7 +66,7 @@ def assess_evidence(
         else set()
     )
     coverage = len(query_terms & evidence_terms) / max(1, len(query_terms))
-    required_entities = query_terms & REQUIRED_ENTITY_TERMS
+    required_entities = query_terms & RETRIEVAL_ENTITY_TERMS
     missing_entities = required_entities - evidence_terms
     contradictory = _has_contradiction(selected)
     top_score = selected[0].rerank_score if selected else 0.0

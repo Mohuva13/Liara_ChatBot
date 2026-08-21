@@ -16,7 +16,11 @@ from app.ingestion.parser import DocumentParseError, parse_document, parse_units
 from app.ingestion.pipeline import embed_snapshot, scan_corpus
 from app.ingestion.redactor import redact_credentials
 from app.providers.base import ProviderFailure
-from app.retrieval.normalizer import normalize_persian, normalize_search_query
+from app.retrieval.normalizer import (
+    normalize_persian,
+    normalize_search_query,
+    websearch_or_query,
+)
 
 
 def test_parse_document_extracts_canonical_metadata(tmp_path: Path) -> None:
@@ -109,6 +113,13 @@ def test_search_query_removes_conversational_noise_and_normalizes_postgres() -> 
     assert (
         normalize_search_query("Connection pooling توی postgres چطوریه")
         == "connection pooling postgresql"
+    )
+
+
+def test_websearch_query_uses_recall_or_without_liara_question_noise() -> None:
+    assert (
+        websearch_or_query("Pgvector در PostgreSQL لیارا چه محدودیتی دارد؟")
+        == "pgvector OR postgresql OR محدودیتی"
     )
 
 

@@ -11,6 +11,7 @@ from app.policies.scope import Intent, classify_scope
 from app.retrieval.evidence import assess_evidence
 from app.retrieval.fusion import reciprocal_rank_fusion, rerank
 from app.retrieval.models import RetrievedChunk
+from app.retrieval.postgres import PostgresHybridRetriever
 from app.sessions.models import SessionTurn
 
 
@@ -44,6 +45,36 @@ def test_rrf_combines_independent_rankings() -> None:
 
     assert {item.chunk_id for item in fused[:2]} == {"first", "second"}
     assert fused[0].fused_score > 0
+
+
+@pytest.mark.asyncio
+async def test_postgres_lexical_retrieval_uses_or_query(monkeypatch) -> None:
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeConnection:
+        async def fetch(self, statement: str, *args: object) -> list[object]:
+            calls.append((statement, args))
+            return []
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(database_url: str) -> FakeConnection:
+        assert database_url == "postgresql://test"
+        return FakeConnection()
+
+    monkeypatch.setattr("app.retrieval.postgres.asyncpg.connect", fake_connect)
+    retriever = PostgresHybridRetriever(
+        "postgresql://test", candidate_limit=30, rrf_k=60
+    )
+
+    await retriever.retrieve(
+        "Pgvector در PostgreSQL لیارا چه محدودیتی دارد؟", embedding=None
+    )
+
+    assert len(calls) == 1
+    assert "LIMIT $3" in calls[0][0]
+    assert calls[0][1][1] == "pgvector OR postgresql OR محدودیتی"
 
 
 def test_evidence_requires_relevance_and_query_coverage() -> None:
@@ -108,6 +139,47 @@ def test_casual_postgres_pooling_query_passes_with_lexical_evidence() -> None:
     )
 
     assert ranked[0].rerank_score >= 0.025
+    assert decision.sufficient is True
+
+
+def test_named_extension_outranks_generic_vector_postgres_results() -> None:
+    query = "Pgvector در PostgreSQL لیارا چه محدودیتی دارد؟"
+    exact = RetrievedChunk(
+        chunk_id="pgvector-limit",
+        document_id="postgres-quick-setup",
+        title="راه‌اندازی سریع دیتابیس PostgreSQL",
+        canonical_url="https://docs.liara.ir/dbaas/postgresql/quick-setup/",
+        heading_path=("استفاده از افزونه‌ها",),
+        content="افزونه Pgvector از قابلیت HNSW indexing پشتیبانی نمی‌کند.",
+        token_count=30,
+        source_commit="commit",
+        corpus_version="version",
+        fused_score=1 / 61,
+    )
+    generic = RetrievedChunk(
+        chunk_id="generic-postgres",
+        document_id="postgres-python",
+        title="اتصال به دیتابیس PostgreSQL در برنامه‌های Python",
+        canonical_url="https://docs.liara.ir/paas/python/postgresql/",
+        heading_path=("اتصال",),
+        content="برنامه را به PostgreSQL متصل کنید.",
+        token_count=30,
+        source_commit="commit",
+        corpus_version="version",
+        fused_score=2 / 61,
+    )
+
+    ranked = rerank(query, [generic, exact])
+    decision = assess_evidence(
+        query,
+        ranked,
+        min_score=0.025,
+        min_query_coverage=0.35,
+        limit=6,
+        max_tokens=5000,
+    )
+
+    assert ranked[0].chunk_id == "pgvector-limit"
     assert decision.sufficient is True
 
 

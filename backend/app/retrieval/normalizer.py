@@ -34,6 +34,13 @@ SEARCH_STOP_WORDS = {
     "توی",
     "و",
     "یا",
+    "دارد",
+    "دارند",
+    "کدام",
+    "کنم",
+    "کند",
+    "لیارا",
+    "می",
 }
 SEARCH_ALIASES = {
     "node": "nodejs",
@@ -46,6 +53,27 @@ SEARCH_ALIASES = {
     "پایتون": "python",
     "ردیس": "redis",
 }
+RETRIEVAL_ENTITY_TERMS = frozenset(
+    {
+        "django",
+        "docker",
+        "hnsw",
+        "ivfflat",
+        "kubernetes",
+        "laravel",
+        "mongodb",
+        "mssql",
+        "mysql",
+        "nextjs",
+        "nodejs",
+        "pgvector",
+        "php",
+        "postgis",
+        "postgresql",
+        "python",
+        "redis",
+    }
+)
 
 
 def normalize_persian(value: str) -> str:
@@ -60,6 +88,7 @@ def retrieval_terms(value: str) -> tuple[str, ...]:
     terms: list[str] = []
     seen: set[str] = set()
     for raw_term in SEARCH_TERM.findall(normalize_persian(value)):
+        raw_term = raw_term.strip("؟?!.,،؛:«»()[]{}\"'")
         term = SEARCH_ALIASES.get(raw_term, raw_term)
         if len(term) <= 1 or term in SEARCH_STOP_WORDS or term in seen:
             continue
@@ -70,3 +99,9 @@ def retrieval_terms(value: str) -> tuple[str, ...]:
 
 def normalize_search_query(value: str) -> str:
     return " ".join(retrieval_terms(value)) or normalize_persian(value)
+
+
+def websearch_or_query(value: str) -> str:
+    """Build a parameterized websearch query that recalls any meaningful term."""
+    terms = retrieval_terms(value)
+    return " OR ".join(terms) if terms else normalize_persian(value)

@@ -4,7 +4,7 @@ import asyncpg
 
 from app.retrieval.fusion import deduplicate_sections, reciprocal_rank_fusion, rerank
 from app.retrieval.models import RetrievedChunk
-from app.retrieval.normalizer import normalize_search_query
+from app.retrieval.normalizer import normalize_search_query, websearch_or_query
 
 
 def _vector_literal(vector: Sequence[float]) -> str:
@@ -38,6 +38,7 @@ class PostgresHybridRetriever:
         self, query: str, embedding: Sequence[float] | None
     ) -> list[RetrievedChunk]:
         normalized = normalize_search_query(query)
+        lexical_query = websearch_or_query(query)
         connection = await asyncpg.connect(self.database_url)
         try:
             lexical_rows = await connection.fetch(
@@ -45,19 +46,20 @@ class PostgresHybridRetriever:
                 SELECT c.stable_id AS chunk_id, c.document_id, d.title,
                        d.canonical_url, c.heading_path, c.content, c.token_count,
                        v.source_commit, v.id AS corpus_version,
-                       ts_rank_cd(c.search_vector, websearch_to_tsquery('simple', $1))
+                       ts_rank_cd(c.search_vector, websearch_to_tsquery('simple', $2))
                          + (similarity(c.normalized_content, $1) * 0.3) AS score
                 FROM chunks c
                 JOIN documents d ON d.version_id = c.version_id
                                 AND d.stable_id = c.document_id
                 JOIN corpus_versions v ON v.id = c.version_id
                 WHERE v.activated_at IS NOT NULL
-                  AND (c.search_vector @@ websearch_to_tsquery('simple', $1)
+                  AND (c.search_vector @@ websearch_to_tsquery('simple', $2)
                        OR similarity(c.normalized_content, $1) > 0.03)
                 ORDER BY score DESC, c.stable_id
-                LIMIT $2
+                LIMIT $3
                 """,
                 normalized,
+                lexical_query,
                 self.candidate_limit,
             )
             lexical = [

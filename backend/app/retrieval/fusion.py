@@ -2,7 +2,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from app.retrieval.models import RetrievedChunk
-from app.retrieval.normalizer import retrieval_terms
+from app.retrieval.normalizer import RETRIEVAL_ENTITY_TERMS, retrieval_terms
 
 
 def reciprocal_rank_fusion(
@@ -34,8 +34,13 @@ def rerank(query: str, chunks: Sequence[RetrievedChunk]) -> list[RetrievedChunk]
         title_overlap = len(query_terms & title_terms) / max(1, len(query_terms))
         heading_overlap = len(query_terms & heading_terms) / max(1, len(query_terms))
         content_overlap = len(query_terms & content_terms) / max(1, len(query_terms))
+        entity_terms = query_terms & RETRIEVAL_ENTITY_TERMS
+        entity_overlap = len(
+            entity_terms & (title_terms | heading_terms | content_terms)
+        ) / max(1, len(entity_terms))
         score = (
             chunk.fused_score
+            + (0.04 * entity_overlap)
             + (0.012 * title_overlap)
             + (0.008 * heading_overlap)
             + (0.004 * content_overlap)

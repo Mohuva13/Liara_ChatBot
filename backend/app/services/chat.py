@@ -37,7 +37,7 @@ from app.providers.base import (
 )
 from app.retrieval.evidence import assess_evidence
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
-from app.retrieval.normalizer import retrieval_terms
+from app.retrieval.normalizer import RETRIEVAL_ENTITY_TERMS, retrieval_terms
 from app.services.response_cache import ResponseCache, response_cache_key
 from app.sessions.models import ReservationResult, SessionState, SessionTurn
 
@@ -104,20 +104,7 @@ FAILURE_MARKERS = (
     "نتیجه نداد",
     "هنوز مشکل دارم",
 )
-RETRIEVAL_CONTEXT_ANCHORS = {
-    "django",
-    "docker",
-    "laravel",
-    "mongodb",
-    "mssql",
-    "mysql",
-    "nextjs",
-    "nodejs",
-    "php",
-    "postgresql",
-    "python",
-    "redis",
-}
+RETRIEVAL_CONTEXT_ANCHORS = set(RETRIEVAL_ENTITY_TERMS)
 RETRIEVAL_TOPIC_ANCHORS = RETRIEVAL_CONTEXT_ANCHORS | {
     "دامنه",
     "dns",
@@ -822,8 +809,6 @@ class ChatOrchestrator:
 
     @staticmethod
     def _follows_terminal_support(prepared: PreparedChat) -> bool:
-        if not ChatOrchestrator._is_contextual_follow_up(prepared):
-            return False
         previous_assistant = next(
             (
                 turn
@@ -832,9 +817,13 @@ class ChatOrchestrator:
             ),
             None,
         )
-        return bool(
-            previous_assistant is not None and previous_assistant.outcome == "support"
-        )
+        if previous_assistant is None or previous_assistant.outcome != "support":
+            return False
+        terms = set(retrieval_terms(prepared.payload.text))
+        if terms & RETRIEVAL_ENTITY_TERMS:
+            return False
+        normalized = " ".join(prepared.payload.text.casefold().split())
+        return any(normalized.startswith(prefix) for prefix in FOLLOW_UP_PREFIXES)
 
     async def _support(
         self,
