@@ -111,6 +111,13 @@ class FakeRetriever:
         ]
 
 
+class EmptyRetriever:
+    async def retrieve(
+        self, query: str, embedding: Sequence[float] | None
+    ) -> list[RetrievedChunk]:
+        return []
+
+
 class FakeProvider:
     def __init__(self) -> None:
         self.called = False
@@ -292,6 +299,35 @@ async def test_query_embedding_failure_falls_back_to_lexical_retrieval() -> None
 
     assert retriever.last_embedding is None
     assert events[-1]["outcome"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_missing_evidence_clarifies_before_offering_support() -> None:
+    store = FakeStore()
+    orchestrator = ChatOrchestrator(
+        settings=settings(),
+        store=store,
+        rate_limiter=FakeRateLimiter(),
+        retriever=EmptyRetriever(),
+        llm_provider=FakeProvider(),
+        embedding_provider=FakeProvider(),
+    )
+    first = await orchestrator.prepare(
+        payload("تنظیم ناشناخته دیتابیس لیارا چطور است؟"), request_id="request-1"
+    )
+
+    first_events = parse_events([chunk async for chunk in orchestrator.stream(first)])
+
+    assert not any(event["type"] == "support" for event in first_events)
+    assert first_events[-1]["outcome"] == "clarification"
+
+    second = await orchestrator.prepare(
+        payload("من از Node.js استفاده می‌کنم"), request_id="request-2"
+    )
+    second_events = parse_events([chunk async for chunk in orchestrator.stream(second)])
+
+    assert any(event["type"] == "support" for event in second_events)
+    assert second_events[-1]["outcome"] == "support"
 
 
 @pytest.mark.asyncio

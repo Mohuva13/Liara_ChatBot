@@ -34,7 +34,7 @@ from app.providers.base import (
     ProviderMessage,
     ProviderUsage,
 )
-from app.retrieval.evidence import assess_evidence, meaningful_terms
+from app.retrieval.evidence import assess_evidence
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
 from app.services.response_cache import ResponseCache, response_cache_key
 from app.sessions.models import ReservationResult, SessionState, SessionTurn
@@ -225,13 +225,13 @@ class ChatOrchestrator:
                 outcome="sufficient" if decision.sufficient else decision.reason,
             )
             if not decision.sufficient:
-                if len(meaningful_terms(payload.text)) < 3:
-                    async for event in self._clarification(prepared, decision.reason):
-                        yield event
-                else:
+                if self._follows_retrieval_clarification(prepared):
                     async for event in self._support(
                         prepared, reason=decision.reason, evidence=evidence
                     ):
+                        yield event
+                else:
+                    async for event in self._clarification(prepared, decision.reason):
                         yield event
                 completed = True
                 return
@@ -610,10 +610,17 @@ class ChatOrchestrator:
     async def _clarification(
         self, prepared: PreparedChat, reason: str
     ) -> AsyncIterator[bytes]:
-        text = (
-            "برای پیدا کردن سند درست، لطفاً نام سرویس یا پلتفرم لیارا و هدف یا "
-            "خطایی که می‌بینید را مشخص کنید."
-        )
+        if reason in {"low_relevance", "insufficient_query_coverage"}:
+            text = (
+                "چند سند نزدیک پیدا کردم، اما برای پاسخ دقیق‌تر لطفاً نام پلتفرم "
+                "یا فریم‌ورک برنامه (مثلاً Node.js، Python یا Laravel) و کاری که "
+                "می‌خواهید انجام دهید را بگویید."
+            )
+        else:
+            text = (
+                "برای پیدا کردن سند درست، لطفاً نام سرویس یا پلتفرم لیارا و هدف یا "
+                "خطایی که می‌بینید را مشخص کنید."
+            )
         yield ChatEvent(type="text_delta", text=text).to_sse()
         yield ChatEvent(
             type="message_end", finish_reason="policy", outcome="clarification"
@@ -624,8 +631,26 @@ class ChatOrchestrator:
                 SessionTurn(
                     role="user", text=self._safe_user_text(prepared.payload.text)
                 ),
-                SessionTurn(role="assistant", text=text, outcome=reason),
+                SessionTurn(
+                    role="assistant", text=text, outcome=f"clarification:{reason}"
+                ),
             ],
+        )
+
+    @staticmethod
+    def _follows_retrieval_clarification(prepared: PreparedChat) -> bool:
+        previous_assistant = next(
+            (
+                turn
+                for turn in reversed(prepared.state.turns)
+                if turn.role == "assistant"
+            ),
+            None,
+        )
+        return bool(
+            previous_assistant is not None
+            and previous_assistant.outcome is not None
+            and previous_assistant.outcome.startswith("clarification:")
         )
 
     async def _support(

@@ -72,6 +72,45 @@ def test_evidence_requires_relevance_and_query_coverage() -> None:
     assert decision.reason == "sufficient"
 
 
+def test_casual_postgres_pooling_query_passes_with_lexical_evidence() -> None:
+    query = "Connection pooling توی postgres چطوریه"
+    ranked = rerank(
+        query,
+        [
+            RetrievedChunk(
+                chunk_id="pooling",
+                document_id="node-postgres",
+                title="اتصال به دیتابیس PostgreSQL در برنامه‌های NodeJS",
+                canonical_url=(
+                    "https://docs.liara.ir/paas/nodejs/how-tos/"
+                    "connect-to-db/postgresql/"
+                ),
+                heading_path=("استفاده از Connection Pooling",),
+                content=(
+                    "برای Connection Pooling دیتابیس PostgreSQL از pg-pool "
+                    "و Pool استفاده کنید."
+                ),
+                token_count=40,
+                source_commit="commit",
+                corpus_version="version",
+                fused_score=1 / 61,
+            )
+        ],
+    )
+
+    decision = assess_evidence(
+        query,
+        ranked,
+        min_score=0.025,
+        min_query_coverage=0.35,
+        limit=6,
+        max_tokens=5000,
+    )
+
+    assert ranked[0].rerank_score >= 0.025
+    assert decision.sufficient is True
+
+
 def test_validator_rejects_unknown_source_and_model_url() -> None:
     evidence = [chunk("known", "محتوای مستند")]
     unknown = json.dumps(

@@ -16,7 +16,7 @@ from app.ingestion.parser import DocumentParseError, parse_document, parse_units
 from app.ingestion.pipeline import embed_snapshot, scan_corpus
 from app.ingestion.redactor import redact_credentials
 from app.providers.base import ProviderFailure
-from app.retrieval.normalizer import normalize_persian
+from app.retrieval.normalizer import normalize_persian, normalize_search_query
 
 
 def test_parse_document_extracts_canonical_metadata(tmp_path: Path) -> None:
@@ -103,6 +103,13 @@ def test_redaction_removes_large_embedded_data_url() -> None:
 )
 def test_persian_normalization_equivalence(left: str, right: str) -> None:
     assert normalize_persian(left) == normalize_persian(right)
+
+
+def test_search_query_removes_conversational_noise_and_normalizes_postgres() -> None:
+    assert (
+        normalize_search_query("Connection pooling توی postgres چطوریه")
+        == "connection pooling postgresql"
+    )
 
 
 def test_chunker_keeps_code_fence_atomic() -> None:

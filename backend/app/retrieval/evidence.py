@@ -1,34 +1,14 @@
-import re
 from collections.abc import Sequence
 
 from app.retrieval.models import EvidenceDecision, RetrievedChunk
-from app.retrieval.normalizer import normalize_persian
+from app.retrieval.normalizer import normalize_persian, retrieval_terms
 
-TERM = re.compile(r"[\w\u0600-\u06ff.+#-]+", re.UNICODE)
-STOP_WORDS = {
-    "از",
-    "است",
-    "با",
-    "برای",
-    "به",
-    "چه",
-    "چطور",
-    "در",
-    "را",
-    "روی",
-    "و",
-    "یا",
-}
 NEGATIVE_MARKERS = ("پشتیبانی نمی کند", "امکان ندارد", "مجاز نیست")
 POSITIVE_MARKERS = ("پشتیبانی می کند", "امکان دارد", "مجاز است")
 
 
 def meaningful_terms(value: str) -> set[str]:
-    return {
-        term
-        for term in TERM.findall(normalize_persian(value))
-        if len(term) > 1 and term not in STOP_WORDS
-    }
+    return set(retrieval_terms(value))
 
 
 def _has_contradiction(chunks: Sequence[RetrievedChunk]) -> bool:

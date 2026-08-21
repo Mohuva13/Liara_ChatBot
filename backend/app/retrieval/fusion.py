@@ -2,7 +2,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from app.retrieval.models import RetrievedChunk
-from app.retrieval.normalizer import normalize_persian
+from app.retrieval.normalizer import retrieval_terms
 
 
 def reciprocal_rank_fusion(
@@ -25,12 +25,12 @@ def reciprocal_rank_fusion(
 
 
 def rerank(query: str, chunks: Sequence[RetrievedChunk]) -> list[RetrievedChunk]:
-    query_terms = set(normalize_persian(query).split())
+    query_terms = set(retrieval_terms(query))
     ranked: list[RetrievedChunk] = []
     for chunk in chunks:
-        title_terms = set(normalize_persian(chunk.title).split())
-        heading_terms = set(normalize_persian(" ".join(chunk.heading_path)).split())
-        content_terms = set(normalize_persian(chunk.content).split())
+        title_terms = set(retrieval_terms(chunk.title))
+        heading_terms = set(retrieval_terms(" ".join(chunk.heading_path)))
+        content_terms = set(retrieval_terms(chunk.content))
         title_overlap = len(query_terms & title_terms) / max(1, len(query_terms))
         heading_overlap = len(query_terms & heading_terms) / max(1, len(query_terms))
         content_overlap = len(query_terms & content_terms) / max(1, len(query_terms))

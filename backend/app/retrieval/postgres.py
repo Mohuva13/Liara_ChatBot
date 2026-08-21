@@ -4,7 +4,7 @@ import asyncpg
 
 from app.retrieval.fusion import deduplicate_sections, reciprocal_rank_fusion, rerank
 from app.retrieval.models import RetrievedChunk
-from app.retrieval.normalizer import normalize_persian
+from app.retrieval.normalizer import normalize_search_query
 
 
 def _vector_literal(vector: Sequence[float]) -> str:
@@ -37,7 +37,7 @@ class PostgresHybridRetriever:
     async def retrieve(
         self, query: str, embedding: Sequence[float] | None
     ) -> list[RetrievedChunk]:
-        normalized = normalize_persian(query)
+        normalized = normalize_search_query(query)
         connection = await asyncpg.connect(self.database_url)
         try:
             lexical_rows = await connection.fetch(
