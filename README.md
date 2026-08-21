@@ -17,7 +17,7 @@ Discovery اجباری دو مخزن مرجع انجام و در [`docs/discover
 
 ## وضعیت پیاده‌سازی
 
-- Page و Popup فارسی RTL با یک `ChatProvider` و session مشترک، streaming/Stop/Retry، source card، suggestion و Support card
+- Page و Popup فارسی RTL با یک `ChatProvider` و session مشترک، تم روشن/تیره/سیستم، streaming/Stop/Retry، کنترل کپی/دانلود کد، source card، suggestion و Support card
 - adapter هم‌مبدأ `/api/chat` که فقط آخرین پیام user را می‌پذیرد و stream نسخه‌بندی‌شده FastAPI را به AI SDK UI تبدیل می‌کند
 - session محدود با sliding TTL، reset واقعی، idempotency، distributed rate limit و failure counter همان issue در Redis
 - ingestion واقعی `public/llms/**/*.md`: canonical metadata، redaction، chunking آگاه از code fence، embedding batch و فعال‌سازی atomic نسخه در Pgvector

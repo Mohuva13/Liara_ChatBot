@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageCircle, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChatShell } from "@/features/chat/components/chat-shell";
 
@@ -37,17 +36,7 @@ export function ChatPopup() {
           className="elevation-popup fixed inset-x-2 bottom-20 z-50 h-[min(42rem,calc(100dvh-6rem))] sm:inset-x-auto sm:start-4 sm:w-[var(--popup-inline-size)]"
           id="liara-assistant-popup"
         >
-          <Button
-            aria-label="بستن پنجره دستیار"
-            className="absolute start-3 top-3 z-10"
-            onClick={close}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            <X aria-hidden="true" />
-          </Button>
-          <ChatShell surface="popup" />
+          <ChatShell onClose={close} surface="popup" />
         </aside>
       ) : null}
 

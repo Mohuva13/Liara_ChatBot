@@ -89,28 +89,32 @@
     --elevation-popup: 0 24px 72px oklch(0.18 0.03 255 / 24%);
     --elevation-floating-action: 0 12px 30px oklch(0.58 0.19 252 / 32%);
     --elevation-source-card: 0 4px 18px oklch(0.3 0.03 255 / 8%);
+    --chat-page-glow: oklch(0.94 0.035 252);
+    --duration-fast: 150ms;
+    --duration-standard: 220ms;
+    --easing-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
+    --background: oklch(0.16 0.018 255);
+    --foreground: oklch(0.96 0.008 255);
+    --card: oklch(0.205 0.022 255);
+    --card-foreground: oklch(0.97 0.006 255);
+    --popover: oklch(0.22 0.022 255);
+    --popover-foreground: oklch(0.97 0.006 255);
+    --primary: oklch(0.69 0.16 250);
+    --primary-foreground: oklch(0.15 0.025 255);
+    --secondary: oklch(0.26 0.022 255);
     --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
+    --muted: oklch(0.26 0.022 255);
+    --muted-foreground: oklch(0.73 0.016 255);
+    --accent: oklch(0.28 0.025 255);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --warning: oklch(0.8 0.14 78);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --ring: oklch(0.69 0.16 250);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -124,6 +128,9 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+    --elevation-chat: 0 24px 64px oklch(0.04 0.02 255 / 38%);
+    --elevation-popup: 0 24px 72px oklch(0.04 0.02 255 / 52%);
+    --chat-page-glow: oklch(0.28 0.065 252);
 }
 
 @layer utilities {
@@ -148,10 +155,16 @@
   body {
     @apply bg-background text-foreground antialiased;
     min-height: 100dvh;
+    transition:
+      background-color var(--duration-standard) var(--easing-standard),
+      color var(--duration-standard) var(--easing-standard);
     }
   html {
     @apply font-sans;
     color-scheme: light;
+    }
+  html.dark {
+    color-scheme: dark;
     }
 }
 
@@ -170,4 +183,8 @@ code,
 pre,
 [dir="ltr"] {
   unicode-bidi: isolate;
+}
+
+[data-streamdown="code-block-actions"] {
+  pointer-events: auto;
 }

@@ -10,7 +10,7 @@
 | provider AvalAI | پیاده‌شده | contract، primary/backup failover، quota/auth mapping، circuit، bulkhead و stream-safe tests | smoke زنده با کلید rotateشده و تأیید model names/quota |
 | session/rate/idempotency/escalation | پیاده‌شده | unit و orchestrator tests | Redis integration، expiry/concurrency/load test |
 | Next stream adapter | سبز | Vitest روی SSEهای split و typed data | E2E stream واقعی پشت proxy deployment |
-| Page/Popup/RTL/responsive | سبز محلی | build و browser QA در 320 و 1440، Escape/focus return | screen-reader matrix و visual regression CI |
+| Page/Popup/RTL/responsive/theme/code actions | سبز محلی | build و browser QA در 320 و 1440، تم light/dark/system، Copy/Download، Escape/focus return | screen-reader matrix و visual regression CI |
 | security/privacy | پیاده‌شده | origin/body/citation/injection/internal-hop/CSP/startup validation/secret tests و threat model | dependency audit و external review |
 | observability/cost | پیاده‌شده | Prometheus metrics، OTLP traces، usage/cost، token budget، grounded cache و alert runbook | اتصال exporter/dashboard و کالیبراسیون budget در staging |
 | deployment | artifact آماده | Dockerfile، liara.json، Compose config و runbook | image build روی daemon، Liara smoke، rollback/restore واقعی |

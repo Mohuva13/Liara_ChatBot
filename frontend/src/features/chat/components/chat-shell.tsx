@@ -31,8 +31,10 @@ import {
 } from "@/components/ai-elements/suggestion";
 import { Button } from "@/components/ui/button";
 import { useLiaraChat } from "@/features/chat/chat-provider";
+import { MarkdownCode } from "@/features/chat/components/code-block";
 import { SourceCards } from "@/features/chat/components/source-cards";
 import { SupportCard } from "@/features/chat/components/support-card";
+import { ThemeToggle } from "@/features/theme/theme-toggle";
 import type { LiaraUIMessage } from "@/features/chat/types/messages";
 import { cn } from "@/lib/utils";
 import {
@@ -41,6 +43,7 @@ import {
   RefreshCcw,
   RotateCcw,
   Sparkles,
+  X,
 } from "lucide-react";
 
 type ChatSurface = "popup" | "page";
@@ -50,6 +53,8 @@ const STARTERS = [
   "برای اتصال امن برنامه به Redis از کدام شبکه استفاده کنم؟",
   "Pgvector در PostgreSQL لیارا چه محدودیتی دارد؟",
 ];
+
+const MARKDOWN_COMPONENTS = { code: MarkdownCode };
 
 function MessageSources({ message }: { message: LiaraUIMessage }) {
   const sources = message.parts.filter((part) => part.type === "source-url");
@@ -94,13 +99,15 @@ function ChatMessage({
         {message.parts.map((part, index) => {
           if (part.type === "text") {
             return (
-            <MessageResponse
-              dir="auto"
-              isAnimating={part.state === "streaming"}
-              key={`${message.id}-text-${index}`}
-            >
-              {part.text}
-            </MessageResponse>
+              <MessageResponse
+                components={MARKDOWN_COMPONENTS}
+                controls={{ code: false }}
+                dir="auto"
+                isAnimating={part.state === "streaming"}
+                key={`${message.id}-text-${index}`}
+              >
+                {part.text}
+              </MessageResponse>
             );
           }
           if (part.type === "data-support") {
@@ -167,7 +174,13 @@ function WelcomeState({ onSelect }: { onSelect: (question: string) => void }) {
   );
 }
 
-export function ChatShell({ surface }: { surface: ChatSurface }) {
+export function ChatShell({
+  onClose,
+  surface,
+}: {
+  onClose?: () => void;
+  surface: ChatSurface;
+}) {
   const [resetFailed, setResetFailed] = useState(false);
   const {
     clearError,
@@ -226,8 +239,7 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
     >
       <header
         className={cn(
-          "flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-6 sm:py-4",
-          surface === "popup" && "ps-12",
+          "flex items-center justify-between gap-3 border-b px-4 py-3 transition-colors sm:px-6 sm:py-4",
         )}
       >
         <div className="min-w-0">
@@ -249,10 +261,25 @@ export function ChatShell({ surface }: { surface: ChatSurface }) {
           >
             <RefreshCcw aria-hidden="true" />
           </Button>
-          <div className="hidden items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary sm:flex">
-            <LifeBuoy aria-hidden="true" className="size-4" />
-            پاسخ مستند
-          </div>
+          <ThemeToggle />
+          {surface === "page" ? (
+            <div className="hidden items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary sm:flex">
+              <LifeBuoy aria-hidden="true" className="size-4" />
+              پاسخ مستند
+            </div>
+          ) : null}
+          {onClose ? (
+            <Button
+              aria-label="بستن پنجره دستیار"
+              onClick={onClose}
+              size="icon-sm"
+              title="بستن پنجره دستیار"
+              type="button"
+              variant="ghost"
+            >
+              <X aria-hidden="true" />
+            </Button>
+          ) : null}
         </div>
       </header>
 
