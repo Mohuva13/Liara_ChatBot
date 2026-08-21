@@ -8,6 +8,7 @@ from pathlib import Path
 
 import asyncpg
 
+from app.core.logging import telemetry_event
 from app.ingestion.chunker import DocumentChunker
 from app.ingestion.models import CorpusSnapshot, IngestionConfig, ParsedDocument
 from app.ingestion.parser import (
@@ -282,6 +283,7 @@ async def embed_snapshot(
     titles = {document.stable_id: document.title for document in snapshot.documents}
     vectors: list[tuple[float, ...]] = []
     for offset in range(0, len(snapshot.chunks), batch_size):
+        batch_num = offset // batch_size + 1
         batch = snapshot.chunks[offset : offset + batch_size]
         inputs = [
             "\n".join(
@@ -295,13 +297,22 @@ async def embed_snapshot(
             )
             for chunk in batch
         ]
+        telemetry_event(
+            "ingestion_embedding_batch_started",
+            batch=batch_num,
+            batch_size=len(batch),
+        )
         result = await provider.embed(
             inputs,
             model=model,
             dimensions=dimensions,
-            request_id=f"{request_id_prefix}-{offset // batch_size + 1}",
+            request_id=f"{request_id_prefix}-{batch_num}",
         )
         vectors.extend(tuple(vector) for vector in result)
+    telemetry_event(
+        "ingestion_embedding_completed",
+        chunks=len(snapshot.chunks),
+    )
     embedded = tuple(vectors)
     _validate_embeddings(snapshot, embedded, dimensions)
     return embedded

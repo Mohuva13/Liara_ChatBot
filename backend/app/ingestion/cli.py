@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -10,16 +11,63 @@ from app.ingestion.pipeline import ingest_corpus, scan_corpus, snapshot_report
 from app.providers.openai_compat import OpenAICompatibleProvider
 from app.providers.resilient import ProviderTarget, ResilientProvider
 
+COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+
+
+def _validate_commit(value: str) -> str:
+    commit = value.strip()
+    if not COMMIT_SHA.fullmatch(commit):
+        raise RuntimeError("documentation source commit is not a full Git SHA")
+    return commit.lower()
+
+
+def _git_directory(docs_root: Path) -> Path:
+    marker = docs_root / ".git"
+    if marker.is_dir():
+        return marker
+    if marker.is_file():
+        content = marker.read_text(encoding="utf-8").strip()
+        if not content.startswith("gitdir: "):
+            raise RuntimeError("invalid documentation .git file")
+        git_dir = Path(content.removeprefix("gitdir: ").strip())
+        return git_dir if git_dir.is_absolute() else (docs_root / git_dir).resolve()
+    raise RuntimeError("documentation checkout has no Git metadata")
+
+
+def _commit_from_git_metadata(docs_root: Path) -> str:
+    git_dir = _git_directory(docs_root)
+    head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    if not head.startswith("ref: "):
+        return _validate_commit(head)
+
+    target_ref = head.removeprefix("ref: ").strip()
+    loose_ref = git_dir / target_ref
+    if loose_ref.is_file():
+        return _validate_commit(loose_ref.read_text(encoding="utf-8"))
+
+    packed_refs = git_dir / "packed-refs"
+    if packed_refs.is_file():
+        for line in packed_refs.read_text(encoding="utf-8").splitlines():
+            if line.startswith(("#", "^")):
+                continue
+            commit, _, ref = line.partition(" ")
+            if ref == target_ref:
+                return _validate_commit(commit)
+    raise RuntimeError(f"cannot resolve documentation Git ref: {target_ref}")
+
 
 def source_commit(docs_root: Path) -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=docs_root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=docs_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return _validate_commit(result.stdout)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return _commit_from_git_metadata(docs_root)
 
 
 async def run() -> None:

@@ -1,5 +1,6 @@
 # JavaScript / Next.js
 node_modules/
+.pnpm-store/
 .next/
 out/
 coverage/

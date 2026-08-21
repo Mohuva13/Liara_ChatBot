@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from app.ingestion.chunker import DocumentChunker
+from app.ingestion.chunker import DocumentChunker, approximate_token_count
+from app.ingestion.cli import _commit_from_git_metadata
 from app.ingestion.models import Chunk, CorpusSnapshot, IngestionConfig, ParsedDocument
 from app.ingestion.parser import DocumentParseError, parse_document, parse_units
 from app.ingestion.pipeline import embed_snapshot, scan_corpus
@@ -58,6 +59,18 @@ def test_redaction_preserves_names_and_code_structure() -> None:
     assert report.count == 3
 
 
+def test_redaction_removes_large_embedded_data_url() -> None:
+    payload = "A" * 10_000
+    source = f"```ts\nconst image = 'data:image/png;base64,{payload}'\n```"
+
+    redacted, report = redact_credentials(source)
+
+    assert payload not in redacted
+    assert "data:image/png;base64,<REDACTED_EMBEDDED_ASSET>" in redacted
+    assert redacted.count("```") == 2
+    assert report.rule_counts["embedded_data_url"] == 1
+
+
 @pytest.mark.parametrize(
     ("left", "right"),
     [
@@ -92,6 +105,51 @@ def test_chunker_keeps_code_fence_atomic() -> None:
     assert len(code_chunks) == 1
     assert code_chunks[0].content.count("```") == 2
     assert code_chunks[0].code_languages == ("bash",)
+
+
+def test_chunker_splits_long_non_code_line_within_limit() -> None:
+    document = ParsedDocument(
+        stable_id="doc",
+        source_path="public/llms/test.md",
+        canonical_url="https://docs.liara.ir/test/",
+        title="تست",
+        content="",
+        content_hash="hash",
+    )
+    content = "# تست\n\n" + "واژه " * 200
+
+    chunks = DocumentChunker(max_tokens=30, min_tokens=1, overlap_tokens=5).chunk(
+        document, parse_units(content)
+    )
+
+    assert len(chunks) > 1
+    assert all(chunk.token_count <= 30 for chunk in chunks)
+    assert "واژه" in " ".join(chunk.content for chunk in chunks)
+
+
+def test_token_estimate_accounts_for_long_unbroken_values() -> None:
+    assert approximate_token_count("A" * 40_000) >= 10_000
+
+
+def test_source_commit_fallback_resolves_packed_ref(tmp_path: Path) -> None:
+    commit = "a" * 40
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (git_dir / "packed-refs").write_text(
+        f"# pack-refs\n{commit} refs/heads/main\n", encoding="utf-8"
+    )
+
+    assert _commit_from_git_metadata(tmp_path) == commit
+
+
+def test_source_commit_fallback_rejects_unresolved_ref(tmp_path: Path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="cannot resolve"):
+        _commit_from_git_metadata(tmp_path)
 
 
 def test_parser_repairs_generated_unclosed_fence() -> None:

@@ -9,7 +9,79 @@ TOKEN = re.compile(r"[\w\u0600-\u06ff]+|[^\s]", re.UNICODE)
 
 
 def approximate_token_count(value: str) -> int:
-    return max(1, len(TOKEN.findall(value)))
+    word_tokens = len(TOKEN.findall(value))
+    char_tokens = (len(value) + 3) // 4
+    return max(1, word_tokens, char_tokens)
+
+
+def _split_large_unit(
+    unit: MarkdownUnit, max_tokens: int, token_counter: Callable[[str], int]
+) -> list[MarkdownUnit]:
+    if token_counter(unit.content) <= max_tokens or unit.kind == "code":
+        return [unit]
+
+    def unit_with_content(content: str) -> MarkdownUnit:
+        return MarkdownUnit(
+            heading_path=unit.heading_path,
+            content=content.strip(),
+            kind=unit.kind,
+            code_language=unit.code_language,
+        )
+
+    def split_oversized_text(value: str) -> list[str]:
+        parts: list[str] = []
+        remaining = value.strip()
+        while remaining:
+            low = 1
+            high = len(remaining)
+            best = 0
+            while low <= high:
+                middle = (low + high) // 2
+                if token_counter(remaining[:middle]) <= max_tokens:
+                    best = middle
+                    low = middle + 1
+                else:
+                    high = middle - 1
+            if best == 0:
+                raise ValueError("token counter cannot fit a single character")
+            boundary = best
+            whitespace = remaining.rfind(" ", max(0, best // 2), best)
+            if whitespace > 0:
+                boundary = whitespace
+            part = remaining[:boundary].strip()
+            if part:
+                parts.append(part)
+            remaining = remaining[boundary:].strip()
+        return parts
+
+    lines = unit.content.splitlines(keepends=True)
+    split_units: list[MarkdownUnit] = []
+    current_lines: list[str] = []
+    for line in lines:
+        candidate = "".join([*current_lines, line]).strip()
+        if current_lines and token_counter(candidate) > max_tokens:
+            text = "".join(current_lines).strip()
+            if text:
+                split_units.append(unit_with_content(text))
+            current_lines = []
+
+        if token_counter(line) > max_tokens:
+            if current_lines:
+                text = "".join(current_lines).strip()
+                if text:
+                    split_units.append(unit_with_content(text))
+                current_lines = []
+            split_units.extend(
+                unit_with_content(part) for part in split_oversized_text(line)
+            )
+            continue
+        current_lines.append(line)
+
+    if current_lines:
+        text = "".join(current_lines).strip()
+        if text:
+            split_units.append(unit_with_content(text))
+    return split_units or [unit]
 
 
 class DocumentChunker:
@@ -29,11 +101,17 @@ class DocumentChunker:
         self.token_counter = token_counter
 
     def chunk(self, document: ParsedDocument, units: list[MarkdownUnit]) -> list[Chunk]:
+        flattened_units: list[MarkdownUnit] = []
+        for unit in units:
+            flattened_units.extend(
+                _split_large_unit(unit, self.max_tokens, self.token_counter)
+            )
+
         groups: list[list[MarkdownUnit]] = []
         current: list[MarkdownUnit] = []
         current_tokens = 0
 
-        for unit in units:
+        for unit in flattened_units:
             unit_tokens = self.token_counter(unit.content)
             if current and current_tokens + unit_tokens > self.max_tokens:
                 groups.append(current)
@@ -41,6 +119,9 @@ class DocumentChunker:
                 current_tokens = sum(
                     self.token_counter(item.content) for item in current
                 )
+                while current and current_tokens + unit_tokens > self.max_tokens:
+                    removed = current.pop(0)
+                    current_tokens -= self.token_counter(removed.content)
             current.append(unit)
             current_tokens += unit_tokens
         if current:

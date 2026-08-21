@@ -16,6 +16,11 @@ CONNECTION_PASSWORD = re.compile(
     r"(?P<value>[^\s@/]+)(?P<suffix>@)",
     re.IGNORECASE,
 )
+EMBEDDED_DATA_URL = re.compile(
+    r"(?P<prefix>data:(?:image|audio|video)/[a-z0-9.+-]+;base64,)"
+    r"[a-z0-9+/=_-]{1024,}",
+    re.IGNORECASE,
+)
 
 
 def redact_credentials(text: str) -> tuple[str, RedactionReport]:
@@ -37,4 +42,8 @@ def redact_credentials(text: str) -> tuple[str, RedactionReport]:
     redacted = ENV_SECRET.sub(redact_env, text)
     redacted = BEARER_SECRET.sub(redact_bearer, redacted)
     redacted = CONNECTION_PASSWORD.sub(redact_connection, redacted)
+    redacted, data_url_count = EMBEDDED_DATA_URL.subn(
+        r"\g<prefix><REDACTED_EMBEDDED_ASSET>", redacted
+    )
+    report.record("embedded_data_url", data_url_count)
     return redacted, report

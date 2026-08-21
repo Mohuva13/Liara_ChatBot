@@ -36,6 +36,27 @@ curl --fail http://localhost:8000/health/ready
 
 اجرای ingestion همان commit و manifest، embedding یا update تکراری انجام نمی‌دهد. نسخه فقط وقتی فعال می‌شود که همهٔ chunkها vector معتبر داشته باشند.
 
+### اسکریپت‌های مدیریت محلی
+
+اسکریپت start، imageهای production را build می‌کند و فقط پس از موفق بودن
+liveness، readiness و صفحهٔ Chat پیام آماده بودن می‌دهد:
+
+```bash
+./scripts/start-local.sh
+./scripts/stop-local.sh
+```
+
+به‌صورت پیش‌فرض start هیچ embedding جدیدی مصرف نمی‌کند. فقط وقتی corpus رسمی
+تغییر کرده است ingestion افزایشی را صریحاً فعال کنید:
+
+```bash
+LIARA_RUN_INGESTION=1 ./scripts/start-local.sh
+```
+
+برای افزایش مهلت انتظار، `LIARA_START_TIMEOUT_SECONDS` را تنظیم کنید. اسکریپت
+stop کانتینرها و شبکه را حذف می‌کند، ولی volumeهای PostgreSQL و Redis را نگه
+می‌دارد.
+
 ## تست provider امن
 
 کلید را در command، history یا فایل tracked قرار ندهید. ابتدا کلید افشاشده را rotate کنید؛ سپس مقدار جدید را در Secret/Environment وارد کنید. smoke query باید source card با دامنهٔ `docs.liara.ir` داشته باشد؛ پاسخ فنی بدون source شکست محسوب می‌شود.
