@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -9,7 +10,13 @@ from app.policies.scope import classify_scope  # noqa: E402
 
 
 def canonical_urls() -> set[str]:
-    docs_root = Path("/home/mohuva/Desktop/hackaton/docs/public/llms")
+    configured = os.getenv("DOCS_REPO_PATH", "").strip()
+    repository = Path(configured) if configured else ROOT.parent / "docs"
+    docs_root = repository / "public" / "llms"
+    if not docs_root.is_dir():
+        raise SystemExit(
+            "official docs corpus not found; set DOCS_REPO_PATH to liara-cloud/docs"
+        )
     urls: set[str] = set()
     for path in docs_root.rglob("*.md"):
         first = path.read_text(encoding="utf-8-sig").splitlines()[:1]

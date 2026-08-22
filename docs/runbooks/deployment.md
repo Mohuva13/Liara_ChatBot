@@ -93,8 +93,9 @@ eval و cost report همراه باشد.
 
 در مسیر chat، query embedding کند یا ناموجود پس از بودجهٔ محدود fail-soft می‌شود
 و retrieval واژگانی/trigram ادامه پیدا می‌کند؛ evidence gate همچنان fail-closed
-است. stream مدل پس از اولین delta به همان provider متعهد می‌شود و بدون buffer به
-کاربر می‌رسد؛ failover فقط قبل از اولین delta مجاز است تا پاسخ ترکیبی نشود.
+است. generation مدل با completion غیرstream و JSON mode انجام می‌شود تا کل خروجی
+پیش از نمایش grounding-validate شود. primary/backup failover در سطح همان completion
+انجام و فقط متن تأییدشده توسط backend به eventهای UI تقسیم می‌شود.
 
 چهار متغیر `LLM_SMALL_INPUT_USD_PER_MILLION`،
 `LLM_SMALL_OUTPUT_USD_PER_MILLION`، `LLM_LARGE_INPUT_USD_PER_MILLION` و

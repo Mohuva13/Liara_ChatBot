@@ -74,8 +74,10 @@ stop کانتینرها و شبکه را حذف می‌کند، ولی volumeه�
 
 در chat، اتصال provider حداکثر `PROVIDER_CONNECT_TIMEOUT_SECONDS` منتظر می‌ماند
 و query embedding حداکثر `QUERY_EMBEDDING_TIMEOUT_SECONDS` بودجه دارد. پس از آن
-lexical/trigram retrieval ادامه پیدا می‌کند و مدل پاسخ را به‌صورت delta واقعی
-stream می‌کند. این timeout تعاملی ingestion کامل corpus را محدود نمی‌کند.
+lexical/trigram retrieval ادامه پیدا می‌کند. generation ساختاریافته به‌صورت
+completion غیرstream انجام می‌شود تا JSON و citation پیش از نمایش کامل validate
+شوند؛ سپس پاسخ تأییدشده به eventهای متنی تقسیم می‌شود. این timeout تعاملی ingestion
+کامل corpus را محدود نمی‌کند.
 
 ## تست provider امن
 
